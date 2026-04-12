@@ -1,0 +1,13 @@
+# Iskra-1 — версии проекта (UTF-8)
+# Обновляйте при смене продукта, комплекта документов или схемы config.yaml.
+# Подробности: docs/VERSIONING.md
+
+# Версия продукта (исходный код и релизы). SemVer: MAJOR.MINOR.PATCH
+PRODUCT_VERSION=0.1.0
+
+# Версия комплекта документов (ТЗ, FORMAL_SPEC, CONFIG_SCHEMA, выровненные пути).
+# SemVer. Меняется при существенных правках спецификации.
+DOCUMENTATION_BUNDLE=1.0.0
+
+# Значение поля schema_version в config.yaml (см. docs/CONFIG_SCHEMA.md).
+CONFIG_SCHEMA_VERSION=1

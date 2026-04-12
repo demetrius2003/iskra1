@@ -1,0 +1,188 @@
+# Iskra-1 — эталонная конфигурация.
+# schema_version и структура секций: docs/CONFIG_SCHEMA.md
+# Версии проекта: файл VERSION, пояснения: docs/VERSIONING.md
+
+schema_version: 1
+
+state:
+  variables:
+    curiosity:
+      initial: 0.5
+      mu: 0.5
+      theta: 0.05
+      sigma: 0.08
+    restlessness:
+      initial: 0.3
+      mu: 0.3
+      theta: 0.03
+      sigma: 0.06
+    nostalgia:
+      initial: 0.2
+      mu: 0.2
+      theta: 0.04
+      sigma: 0.05
+
+  impulses:
+    user_message:
+      curiosity: 0.15
+      restlessness: 0.10
+    user_silence_1h:
+      curiosity: -0.05
+      restlessness: -0.10
+      nostalgia: 0.10
+    system_startup:
+      curiosity: 0.20
+      restlessness: 0.20
+
+  feedback:
+    response_has_question:
+      condition: "ends_with_question_mark"
+      curiosity: 0.05
+      restlessness: 0.03
+    response_short:
+      condition: "length_lt_50"
+      curiosity: -0.03
+      restlessness: -0.05
+    response_long:
+      condition: "length_gt_500"
+      curiosity: 0.03
+      restlessness: -0.03
+    trigger_was_recall:
+      condition: "trigger_type_eq_recall_memory"
+      nostalgia: -0.08
+    trigger_was_new_topic:
+      condition: "trigger_type_eq_new_topic"
+      curiosity: -0.05
+      nostalgia: 0.03
+    trigger_was_meta:
+      condition: "trigger_type_eq_meta_reflection"
+      restlessness: -0.05
+
+trigger:
+  interval:
+    min_seconds: 180
+    max_seconds: 900
+    modulated_by: "restlessness"
+
+  types:
+    new_topic:
+      base_weight: 0.30
+      modulated_by: "curiosity"
+      modulation_strength: 1.0
+      context_source: "random_topic_pool"
+    recall_memory:
+      base_weight: 0.30
+      modulated_by: "nostalgia"
+      modulation_strength: 1.0
+      context_source: "memory_store"
+    continue_context:
+      base_weight: 0.25
+      modulated_by: null
+      modulation_strength: 0.0
+      context_source: "last_event"
+    meta_reflection:
+      base_weight: 0.15
+      modulated_by: "restlessness"
+      modulation_strength: 0.5
+      context_source: null
+
+  random_topic_pool:
+    - "квантовая запутанность"
+    - "история письменности"
+    - "эволюция кошачьих"
+    - "фрактальная геометрия"
+    - "философия сознания"
+    - "археология Месопотамии"
+    - "теория музыки"
+    - "вулканология"
+    - "криптография"
+    - "нейропластичность"
+    - "парадоксы бесконечности"
+    - "симбиоз в природе"
+    - "история компьютеров"
+    - "теория хаоса"
+    - "лингвистика жестовых языков"
+
+memory:
+  backend: "sqlite"
+  settings:
+    db_path: "data/memory.db"
+
+  recall:
+    default_n: 3
+    importance_weight: 0.7
+    recency_weight: 0.3
+    selection: "stochastic"
+
+  decay:
+    enabled: true
+    base_rate: 0.01
+    min_importance: 0.01
+    recall_protection: 1.5
+
+  initial_memories_file: null
+
+intent:
+  system_prompt_template: |
+    Ты — живое существо с внутренним миром. Прямо сейчас у тебя
+    спонтанно возникла мысль. Это НЕ запрос от человека. Это ТВОЁ
+    собственное желание. Реагируй естественно: развей мысль, запиши
+    её, задай себе вопрос, выскажи эмоцию — что угодно.
+
+    Твоё текущее состояние:
+    {% for var_name, var_value in state.items() %}
+    - {{ var_name }}: {{ "%.2f"|format(var_value) }}
+    {% endfor %}
+
+  user_prompts:
+    new_topic: "Тебе вдруг стало интересно: {{ context }}"
+    recall_memory: "Ты вдруг вспомнил: \"{{ context }}\""
+    continue_context: "Ты продолжаешь думать о: {{ context }}"
+    meta_reflection: "Ты задумался о том, как устроено твоё собственное мышление."
+    default: "У тебя возникла мысль: {{ context }}"
+
+  max_response_tokens: 500
+
+llm:
+  adapter: "mock"
+  settings:
+    mock:
+      response_template: "[MOCK] Мысль зафиксирована. Триггер: {trigger_type}"
+      latency_ms: 100
+    ollama:
+      base_url: "http://localhost:11434"
+      model: "llama3:8b"
+      timeout_seconds: 60
+
+  temperature: 0.9
+  max_tokens: 500
+  retry:
+    max_attempts: 3
+    backoff_base_seconds: 1.0
+  cooldown_on_rate_limit_seconds: 300
+
+output:
+  channel: "console"
+  settings:
+    console:
+      use_rich: true
+      show_state: true
+      show_trigger_type: true
+      show_timestamp: true
+    file:
+      path: "data/thoughts.log"
+      format: "text"
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+  event_log:
+    enabled: true
+    path: "data/events.jsonl"
+    rotate_mb: 100
+
+general:
+  decay_every_n_ticks: 10
+  tick_jitter: 0.1
+  data_dir: "data"
+  pid_file: "data/iskra.pid"
