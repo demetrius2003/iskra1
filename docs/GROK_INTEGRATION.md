@@ -55,8 +55,52 @@ class LLMNetworkError(LLMError): ...
 ### OllamaAdapter
 Локальная модель через Ollama API (`POST /api/chat`). Бесплатно, работает без интернета. Зависимость: `httpx`.
 
+### GigaChatAdapter
+Облако Сбера: получение **access token** (OAuth) и запрос `POST .../chat/completions` в формате, близком к OpenAI. Зависимость: `httpx`.
+
+**Учётные данные** (любой один вариант):
+
+- `client_id` + `client_secret` — Iskra сам формирует Basic-ключ;
+- или `credentials_base64` — готовый **авторизационный ключ** из личного кабинета GigaChat API (Base64 от `client_id:client_secret`).
+
+**Переменные окружения** (пример): `GIGACHAT_CLIENT_ID`, `GIGACHAT_CLIENT_SECRET` и в YAML `${GIGACHAT_CLIENT_ID}`.
+
+**Параметры** (`llm.settings.gigachat`):
+
+| Поле | Назначение |
+|------|------------|
+| `scope` | По умолчанию `GIGACHAT_API_PERS`; для ИП/юрлиц см. [документацию Сбера](https://developers.sber.ru/docs/ru/gigachat/api/reference/rest/post-token) |
+| `oauth_url` | По умолчанию `https://ngw.devices.sberbank.ru:9443/api/v2/oauth` |
+| `api_base` | По умолчанию `https://gigachat.devices.sberbank.ru/api/v1` (альтернатива — `https://api.giga.chat/v1` для Салют) |
+| `model` | Идентификатор модели, напр. `GigaChat` или `GigaChat-Max` |
+| `ca_bundle_file` | Путь к **`russian_trusted_root_ca.cer`** (скачивается в кабинете/по инструкции GigaChat). Аналог `ca_bundle_file` в `langchain_community.GigaChat`. Относительный путь — от **текущего рабочего каталога** при запуске (`python -m iskra` из корня → удобно `certs/russian_trusted_root_ca.cer` или `russian_trusted_root_ca.cer` в корне). Допустимо короткое имя поля `ca_bundle` |
+| `verify_ssl` | `true` по умолчанию. С `ca_bundle_file` TLS проверяется по этому пакету корней. `false` — отключить проверку (как `verify_ssl_certs=False` в старых примерах; **небезопасно**) |
+
+Токен кэшируется в памяти до истечения срока (`expires_at` в ответе OAuth).
+
+### YandexGPTAdapter
+**Yandex Cloud Foundation Models**: `POST https://llm.api.cloud.yandex.net/foundationModels/v1/completion`. В теле сообщения используются поля **`text`** (не `content`). Зависимость: `httpx`.
+
+**Авторизация** (`auth`):
+
+- `iam` — заголовок `Authorization: Bearer <iam_token>`. IAM-токен короткоживущий; обновляйте снаружи (`yc iam create-token`, скрипт, CI).
+- `api_key` — `Authorization: Api-Key <секрет>`.
+
+**Обязательно**: идентификатор каталога — `folder_id` (тот же, что в `gpt://<folder_id>/...`), либо полный `model_uri`, из которого каталог извлекается для заголовка `x-folder-id`.
+
+**Параметры** (`llm.settings.yandexgpt`):
+
+| Поле | Назначение |
+|------|------------|
+| `folder_id` | ID каталога в облаке |
+| `model` | Имя модели в URI, по умолчанию `yandexgpt` |
+| `model_version` | Версия в URI, по умолчанию `latest` (например `yandexgpt-lite` + `latest`) |
+| `model_uri` | Если задан целиком (`gpt://.../yandexgpt/latest`), поля `model` / `model_version` не собираются автоматически из `folder_id` |
+
+В конфиге: `llm.adapter: "gigachat"` или `llm.adapter: "yandexgpt"` (допустимо и `yandex_gpt`).
+
 ### Будущее: OpenAIAdapter / GrokAdapter / AnthropicAdapter
-Подключение к облачным API. Требует ключ и платную подписку. Даёт лучшее качество генерации.
+Подключение к прочим облачным API по аналогии с существующими адаптерами.
 
 ## Обработка ограничений
 
@@ -74,7 +118,7 @@ Retry-логика реализована в **MainLoop**, а не в адапт
 
 ```yaml
 llm:
-  adapter: "ollama"               # "mock" | "ollama" | "openai" | "grok" | "anthropic"
+  adapter: "ollama"               # mock | ollama | gigachat | yandexgpt | yandex_gpt
   settings:
     mock:
       response_template: "[MOCK] Мысль зафиксирована. Триггер: {trigger_type}"

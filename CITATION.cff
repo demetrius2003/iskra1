@@ -1,0 +1,26 @@
+# Citation File Format 1.2.0 — каталоги ПО и агрегаторы цитирования подхватывают метаданные.
+# После создания репозитория замените PLACEHOLDER на org/user и имя репо.
+cff-version: 1.2.0
+title: Iskra-1
+version: 0.2.0
+date-released: "2026-04-12"
+license: MIT
+repository-code: "https://github.com/PLACEHOLDER/PLACEHOLDER"
+url: "https://github.com/PLACEHOLDER/PLACEHOLDER"
+abstract: >-
+  Framework (design-first) for an external autonomous loop around LLMs:
+  state engine, stochastic triggers, episodic memory, intent generation,
+  and pluggable LLM adapters (e.g. Mock, Ollama).
+keywords:
+  - llm
+  - large-language-models
+  - python
+  - asyncio
+  - autonomous-agent
+  - cognitive-architecture
+  - memory
+  - ollama
+  - pydantic
+message: "If you use or discuss Iskra-1, please cite this repository."
+authors:
+  - name: "Iskra-1 contributors"

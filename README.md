@@ -2,6 +2,8 @@
 
 **Фреймворк для выращивания искусственной интенции в языковых моделях.**
 
+*English:* **Iskra-1** is a Python, design-first framework for an **autonomous inner loop** around large language models: **state engine** (Ornstein–Uhlenbeck drift), **stochastic triggers**, **episodic memory**, **intent / prompt generation**, and **pluggable LLM adapters** (Mock, Ollama, future APIs). Not a chatbot — a **continuous spark** of spontaneous thoughts between user messages.
+
 ## Проблема
 
 Все существующие LLM (GPT, Grok, Claude, Gemini, DeepSeek, ...) работают по одному принципу: **запрос → ответ → тишина**. Между запросами пользователя модель не существует. Нет внутреннего монолога, нет спонтанных мыслей, нет желаний. Только потенциал, ожидающий следующего электрического импульса.
@@ -46,15 +48,21 @@ Output Channel (консоль / Telegram / файл)
 
 | Что | Где | Текущее значение |
 |-----|-----|------------------|
-| Продукт (SemVer) | [`VERSION`](VERSION) → `PRODUCT_VERSION` | **0.1.0** — документация и дизайн согласованы, код ещё не начат |
-| Комплект документов | [`VERSION`](VERSION) → `DOCUMENTATION_BUNDLE` | **1.0.0** |
+| Продукт (SemVer) | [`VERSION`](VERSION) → `PRODUCT_VERSION` | **0.2.0** — исполняемое ядро (`python -m iskra`), MVP в развитии |
+| Комплект документов | [`VERSION`](VERSION) → `DOCUMENTATION_BUNDLE` | **1.0.1** |
 | Схема `config.yaml` | [`VERSION`](VERSION) → `CONFIG_SCHEMA_VERSION` и поле `schema_version` в [`config.yaml`](config.yaml) | **1** |
 
 Правила обновления: [docs/VERSIONING.md](docs/VERSIONING.md). Дорожная карта возможностей кода: [docs/ROADMAP.md](docs/ROADMAP.md).
 
+## Поиск и видимость на GitHub
+
+GitHub **не хранит** темы (topics) и краткое описание репозитория в git — их нужно указать на сайте: **About → Description** и **About → Topics**. Готовый чеклист, список тем и пояснения: **[docs/GITHUB_DISCOVERY.md](docs/GITHUB_DISCOVERY.md)**. В корне добавлен **[CITATION.cff](CITATION.cff)** для цитирования и каталогов ПО (после создания репо замените `PLACEHOLDER` на реальный URL).
+
 ## Документация
 
 Актуальные материалы проекта лежат в каталоге [`docs/`](docs/). Черновики, переписка и исследования — в [`research/`](research/). Эталон конфигурации для запуска: [`config.yaml`](config.yaml) в корне репозитория.
+
+**С нуля до первого запуска:** [docs/QUICKSTART.md](docs/QUICKSTART.md).
 
 ### Архитектура и дизайн
 | Файл | Содержание |
@@ -68,12 +76,14 @@ Output Channel (консоль / Telegram / файл)
 | [EVENT_LIFECYCLE.md](docs/EVENT_LIFECYCLE.md) | Полный жизненный цикл события |
 | [CONFIG_SCHEMA.md](docs/CONFIG_SCHEMA.md) | Схема конфигурации (эталон — [`config.yaml`](config.yaml) в корне) |
 | [VERSIONING.md](docs/VERSIONING.md) | Нумерация версий продукта, документов и config |
+| [GITHUB_DISCOVERY.md](docs/GITHUB_DISCOVERY.md) | Темы, описание репо, индексация и внешний поиск |
 | [PSYCHOLOGY_MODEL.md](docs/PSYCHOLOGY_MODEL.md) | Биологическая модель: от улитки к человеку |
 | [TECHNOLOGIES.md](docs/TECHNOLOGIES.md) | Обзор технологий на фронтире |
 
 ### Спецификация и планирование
 | Файл | Содержание |
 |------|-----------|
+| [QUICKSTART.md](docs/QUICKSTART.md) | Установка, запуск, Ollama, файлы данных, тесты |
 | [ТЕХНИЧЕСКОЕ ЗАДАНИЕ.txt](docs/ТЕХНИЧЕСКОЕ%20ЗАДАНИЕ.txt) | Техническое задание (v2.1) |
 | [FORMAL_SPECIFICATION.md](docs/FORMAL_SPECIFICATION.md) | Формализованная спецификация (контракты, алгоритмы, модели данных) |
 | [IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) | Пошаговый план реализации |
@@ -94,7 +104,7 @@ Output Channel (консоль / Telegram / файл)
 
 ## Статус
 
-**PRODUCT_VERSION 0.1.0** — согласованная документация и эталонный `config.yaml`; исполняемый пакет `iskra` в репозитории отсутствует (следующий шаг по [IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md)).
+**PRODUCT_VERSION 0.2.0** — пакет `iskra` запускается (`py -m pip install -e .`, затем `python -m iskra` из корня с `config.yaml`). Тесты: `py -m pytest tests`. Подробности — [IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md).
 
 ## Лицензия
 

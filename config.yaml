@@ -153,6 +153,29 @@ llm:
       base_url: "http://localhost:11434"
       model: "llama3:8b"
       timeout_seconds: 60
+    # GigaChat (Сбер): OAuth + chat/completions. Секреты — через ${VAR}.
+    # Файл russian_trusted_root_ca.cer — с портала Сбера (документация GigaChat); положите, например:
+    #   certs/russian_trusted_root_ca.cer  или в корень проекта (как в gigarag5.py).
+    # gigachat:
+    #   client_id: "${GIGACHAT_CLIENT_ID}"
+    #   client_secret: "${GIGACHAT_CLIENT_SECRET}"
+    #   # или один ключ из личного кабинета (Base64 от id:secret), как GIGACHAT_CREDENTIALS в gigarag5:
+    #   # credentials_base64: "${GIGACHAT_CREDENTIALS_B64}"
+    #   scope: "GIGACHAT_API_PERS"
+    #   model: "GigaChat"
+    #   ca_bundle_file: "certs/russian_trusted_root_ca.cer"
+    #   timeout_seconds: 120
+    #   verify_ssl: true
+    #   # verify_ssl: false  — только если без CA не подключается (небезопасно)
+    # YandexGPT (Yandex Cloud Foundation Models):
+    # yandexgpt:
+    #   folder_id: "${YC_FOLDER_ID}"
+    #   auth: "iam"
+    #   iam_token: "${YC_IAM_TOKEN}"
+    #   # либо auth: "api_key" и api_key: "${YC_API_KEY}"
+    #   model: "yandexgpt"
+    #   model_version: "latest"
+    #   timeout_seconds: 120
 
   temperature: 0.9
   max_tokens: 500

@@ -1,0 +1,84 @@
+# Minimal config for fast tests (2–6 s between ticks)
+schema_version: 1
+
+state:
+  variables:
+    curiosity:
+      initial: 0.5
+      mu: 0.5
+      theta: 0.05
+      sigma: 0.08
+    restlessness:
+      initial: 0.3
+      mu: 0.3
+      theta: 0.03
+      sigma: 0.06
+    nostalgia:
+      initial: 0.2
+      mu: 0.2
+      theta: 0.04
+      sigma: 0.05
+  impulses:
+    system_startup:
+      curiosity: 0.05
+      restlessness: 0.05
+  feedback:
+    r1:
+      condition: "length_lt_50"
+      curiosity: 0.01
+
+trigger:
+  interval:
+    min_seconds: 2
+    max_seconds: 6
+    modulated_by: "restlessness"
+  types:
+    new_topic:
+      base_weight: 1.0
+      modulated_by: null
+      modulation_strength: 0.0
+      context_source: "random_topic_pool"
+  random_topic_pool:
+    - "test-topic-alpha"
+    - "test-topic-beta"
+
+memory:
+  backend: sqlite
+  settings:
+    db_path: "data/test_memory.db"
+  initial_memories_file: null
+
+intent:
+  system_prompt_template: "State: {% for k,v in state.items() %}{{k}}={{v}} {% endfor %}"
+  user_prompts:
+    new_topic: "Topic: {{ context }}"
+    default: "Think: {{ context }}"
+
+llm:
+  adapter: mock
+  settings:
+    mock:
+      response_template: "[MOCK] {trigger_type}: {user_prompt}"
+      latency_ms: 1
+
+output:
+  channel: console
+  settings:
+    console:
+      use_rich: false
+      show_state: true
+      show_trigger_type: true
+      show_timestamp: false
+
+logging:
+  level: WARNING
+  event_log:
+    enabled: true
+    path: "data/test_events.jsonl"
+    rotate_mb: 100
+
+general:
+  decay_every_n_ticks: 100
+  tick_jitter: 0.01
+  data_dir: "data"
+  pid_file: "data/test_iskra.pid"
