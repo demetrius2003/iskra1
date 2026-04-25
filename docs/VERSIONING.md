@@ -52,6 +52,14 @@
 
 ## 5. История комплекта
 
+**1.1.0**
+
+- [PUBLIC_API.md](PUBLIC_API.md), [CHANGELOG.md](CHANGELOG.md), [TODO_LIBRARY_AND_ISKRA2.md](TODO_LIBRARY_AND_ISKRA2.md) (реализация библиотечного API v0.3.0); уточнения в [CONFIG_SCHEMA.md](CONFIG_SCHEMA.md) (загрузка конфигурации, `load_config`).
+
+**1.2 (редакция CONFIG_SCHEMA 1.3 и связанные тексты)**
+
+- [CONFIG_SCHEMA.md](CONFIG_SCHEMA.md) § `general`: `external_input_file`, `external_input_max_chars`, `external_input_clear_after_use`, `preflight`; [INTENT_GENERATOR.md](INTENT_GENERATOR.md) (переменная Jinja `external_input`); [ARCHITECTURE.md](ARCHITECTURE.md) §8; [EVENT_LIFECYCLE.md](EVENT_LIFECYCLE.md); [README.md](../README.md); [PUBLIC_API.md](PUBLIC_API.md) (сводка по конфигу).
+
 **1.0.1**
 
 - `docs/GITHUB_DISCOVERY.md`, англоязычный абзац в `README.md`, `CITATION.cff`, `.github/ISSUE_TEMPLATE/config.yml`.

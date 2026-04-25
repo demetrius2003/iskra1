@@ -18,9 +18,13 @@ class Jinja2IntentGenerator:
 
     def generate(self, event: SparkEvent) -> IntentPayload:
         state = event.state_snapshot
+        ext = (event.metadata or {}).get("external_input") or ""
+        if not isinstance(ext, str):
+            ext = str(ext)
+
         try:
             sys_t = jinja2.Template(self._cfg.system_prompt_template)
-            system_prompt = sys_t.render(state=state)
+            system_prompt = sys_t.render(state=state, external_input=ext)
         except jinja2.TemplateError as e:
             logger.error("system template error: %s", e)
             raise
@@ -36,6 +40,7 @@ class Jinja2IntentGenerator:
             user_prompt = user_t.render(
                 context=context_string,
                 memories=[m.content for m in event.memory_context],
+                external_input=ext,
             )
         except jinja2.TemplateError as e:
             logger.error("user template error: %s", e)

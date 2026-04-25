@@ -106,6 +106,10 @@ Iskra-1 копирует именно эту минимальную схему, 
 
 Каждый полный цикл записывается в `events.jsonl` (JSON Lines). Содержит всё: state_before/after, промпты, ответ LLM, токены, latency, ошибки. Подробно: [EVENT_LIFECYCLE.md](EVENT_LIFECYCLE.md).
 
+### 8. Внешний текст (опционально, `general.external_input_file`)
+
+Путь в конфиге к **UTF-8** файлу: если в момент тика (при доступной LLM) в файле непустой текст, он попадает в `SparkEvent.metadata` и в промпты как **`external_input`** (Jinja2), плюс импульс `user_message` к состоянию. Источник — любой: Telegram, скрипт, ручное редактирование. Схема полей: [CONFIG_SCHEMA.md](CONFIG_SCHEMA.md) § `general`; жизненный цикл: [EVENT_LIFECYCLE.md](EVENT_LIFECYCLE.md).
+
 ## Принцип расширяемости
 
 Каждый компонент — это **Python Protocol** (структурный интерфейс). Реализации подключаются через фабрики и конфигурацию. Пользователь фреймворка может:
@@ -115,6 +119,7 @@ Iskra-1 копирует именно эту минимальную схему, 
 - Подключить другой бэкенд памяти → реализовать `MemoryStore` Protocol.
 - Подключить другую LLM → реализовать `LLMAdapter` Protocol.
 - Подключить другой канал вывода → реализовать `OutputChannel` Protocol.
+- Подмешать **внешний сигнал в цикл** → задать `general.external_input_file` (см. §8 выше и [CONFIG_SCHEMA.md](CONFIG_SCHEMA.md)); без отдельного канала ввода, только файловая очередь.
 
 Ядро (`MainLoop`, `StateEngine`) **не меняется** при расширении. Конфигурация: [CONFIG_SCHEMA.md](CONFIG_SCHEMA.md).
 

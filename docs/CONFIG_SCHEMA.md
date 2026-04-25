@@ -1,8 +1,8 @@
 # Config Schema (Схема конфигурации)
 
-**Версия документа:** 1.1  
-**Дата:** 12 апреля 2026  
-**Комплект документации:** 1.0.1 (файл `VERSION` в корне репозитория)  
+**Версия документа:** 1.3  
+**Дата:** 25 апреля 2026  
+**Комплект документации:** 1.2.0 (файл `VERSION` в корне репозитория)  
 **Поле `schema_version` в YAML:** `1` (см. также `CONFIG_SCHEMA_VERSION` в `VERSION`)
 
 ## Назначение
@@ -428,13 +428,30 @@ logging:
 
 ### general
 
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `preflight` | `bool`, по умолчанию `true` | Предстарт: память, пути, доступность LLM. |
+| `external_input_file` | `str \| null` | Путь к **UTF-8** файлу с внешним текстом. Если **не** `null` и в файле после `strip()` есть содержимое, на **каждом** тике (после проверки кулдауна и доступности LLM) оно: подмешивается в промпты Jinja2 как `external_input`, вызывается импульс `user_message` к состоянию, копируется в `SparkEvent.metadata["external_input"]`. Подходит для сигнала с Telegram, скрипта, ручного редактора. **Нет** файла или **пусто** — ветка не срабатывает. |
+| `external_input_max_chars` | `int` | Максимальная длина текста (по умолчанию 8000); лишнее обрезается. |
+| `external_input_clear_after_use` | `bool`, по умолчанию `true` | После **успешного** ответа LLM и `output.emit` — записать в файл пустую строку. Если `false` — файл **не** очищается (риск повторов на следующих тиках). При ошибке LLM/вывода — очистка **не** выполняется, текст остаётся для повторной попытки. |
+| `decay_every_n_ticks` | `int ≥ 1` | Каждые N успешных тиков — `memory.decay()`. |
+| `tick_jitter` | `0.0…1.0` | Случайный множитель к интервалу триггера. |
+| `data_dir` | `str` | Каталог данных. |
+| `pid_file` | `str` | Путь к pid-файлу (двойной запуск). |
+
 ```yaml
 general:
-  decay_every_n_ticks: 10         # запуск decay каждые N тиков
-  tick_jitter: 0.1                # случайный разброс ±10% к интервалу
-  data_dir: "data"                # директория для всех данных
-  pid_file: "data/iskra.pid"      # для предотвращения двойного запуска
+  preflight: true
+  external_input_file: null        # напр. "data/incoming.txt" — непустой UTF-8 подмешивается в тик
+  external_input_max_chars: 8000
+  external_input_clear_after_use: true
+  decay_every_n_ticks: 10
+  tick_jitter: 0.1
+  data_dir: "data"
+  pid_file: "data/iskra.pid"
 ```
+
+В шаблонах `intent` доступна переменная Jinja2 **`{{ external_input }}`** (строка; пустая, если ввода не было). Полный пример с `{% if external_input %}` — в эталонном [`config.yaml`](../config.yaml) в корне репозитория.
 
 ---
 
@@ -623,11 +640,17 @@ logging:
     rotate_mb: 100
 
 general:
+  preflight: true
+  external_input_file: null
+  external_input_max_chars: 8000
+  external_input_clear_after_use: true
   decay_every_n_ticks: 10
   tick_jitter: 0.1
   data_dir: "data"
   pid_file: "data/iskra.pid"
 ```
+
+*Примечание.* Раздел `intent` в фрагменте выше упрощён; в корневом `config.yaml` могут быть блоки `{% if external_input %}` в шаблонах — см. актуальный файл.
 
 ---
 
@@ -733,6 +756,10 @@ class GeneralConfig(BaseModel):
     tick_jitter: float = Field(ge=0.0, le=1.0, default=0.1)
     data_dir: str = "data"
     pid_file: str = "data/iskra.pid"
+    preflight: bool = True
+    external_input_file: str | None = None
+    external_input_max_chars: int = Field(8000, ge=1, le=500_000)
+    external_input_clear_after_use: bool = True
 
 class IskraConfig(BaseModel):
     schema_version: int = 1
@@ -750,27 +777,18 @@ class IskraConfig(BaseModel):
 
 ## Загрузка конфигурации (псевдокод)
 
+Реализация: `load_config()` в `iskra/core/config.py`. Сначала `yaml.safe_load`, затем **рекурсивная** подстановка `${VAR_NAME}` **только в строковых значениях** (комментарии в YAML в структуру не попадают — плейсхолдеры в `# ...` не ломают запуск). После Pydantic-валидации — `validate_cross_config()`. **Библиотечный** `load_config` с **0.3.0** при ошибке **выбрасывает исключения** (`FileNotFoundError`, `yaml.YAMLError`, `ValidationError`, `ValueError` и т.д.). CLI (`iskra` / `python -m iskra`) ловит их и печатает в `stderr` (см. [PUBLIC_API.md](PUBLIC_API.md)).
+
 ```python
-import os
 import re
 import yaml
 from pathlib import Path
 
 def load_config(path: str = "config.yaml") -> IskraConfig:
     raw = Path(path).read_text(encoding="utf-8")
-
-    # Подстановка переменных окружения: ${VAR_NAME} → os.environ[VAR_NAME]
-    def replace_env(match):
-        var = match.group(1)
-        value = os.environ.get(var)
-        if value is None:
-            raise ValueError(f"Environment variable {var} not set")
-        return value
-
-    raw = re.sub(r'\$\{(\w+)\}', replace_env, raw)
-
     data = yaml.safe_load(raw)
-    return IskraConfig(**data)
+    data = deep_substitute_env_in_strings(data)  # ${VAR} только в значениях
+    return IskraConfig.model_validate(data)  # + validate_cross_config(cfg)
 ```
 
 ---

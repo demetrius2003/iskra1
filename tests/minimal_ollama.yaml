@@ -1,0 +1,85 @@
+# Like minimal.yaml but LLM = ollama (for preflight / adapter tests)
+schema_version: 1
+
+state:
+  variables:
+    curiosity:
+      initial: 0.5
+      mu: 0.5
+      theta: 0.05
+      sigma: 0.08
+    restlessness:
+      initial: 0.3
+      mu: 0.3
+      theta: 0.03
+      sigma: 0.06
+    nostalgia:
+      initial: 0.2
+      mu: 0.2
+      theta: 0.04
+      sigma: 0.05
+  impulses:
+    system_startup:
+      curiosity: 0.05
+      restlessness: 0.05
+  feedback:
+    r1:
+      condition: "length_lt_50"
+      curiosity: 0.01
+
+trigger:
+  interval:
+    min_seconds: 2
+    max_seconds: 6
+    modulated_by: "restlessness"
+  types:
+    new_topic:
+      base_weight: 1.0
+      modulated_by: null
+      modulation_strength: 0.0
+      context_source: "random_topic_pool"
+  random_topic_pool:
+    - "a"
+    - "b"
+
+memory:
+  backend: sqlite
+  settings:
+    db_path: "MEM_DB_PLACEHOLDER"
+  initial_memories_file: null
+
+intent:
+  system_prompt_template: "s"
+  user_prompts:
+    new_topic: "t"
+    default: "d"
+
+llm:
+  adapter: ollama
+  settings:
+    ollama:
+      base_url: "http://127.0.0.1:11434"
+      model: "m"
+      timeout_seconds: 5
+
+output:
+  channel: console
+  settings:
+    console:
+      use_rich: false
+      show_state: true
+      show_trigger_type: true
+      show_timestamp: false
+
+logging:
+  level: WARNING
+  event_log:
+    enabled: true
+    path: "EVLOG_PLACEHOLDER"
+    rotate_mb: 100
+
+general:
+  decay_every_n_ticks: 100
+  tick_jitter: 0.01
+  data_dir: "DATA_DIR_PLACEHOLDER"
+  pid_file: "PID_PLACEHOLDER"

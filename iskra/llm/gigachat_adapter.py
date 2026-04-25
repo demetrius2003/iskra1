@@ -197,3 +197,7 @@ class GigaChatAdapter:
 
     def is_available(self) -> bool:
         return bool(self._basic)
+
+    async def preflight_oauth(self) -> None:
+        """Предстартовая проверка: получение токена OAuth. Рейз при сетевой/авторизационной ошибке."""
+        await self._ensure_token()

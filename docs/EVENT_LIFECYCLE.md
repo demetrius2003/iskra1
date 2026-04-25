@@ -72,6 +72,8 @@
 
 **Что:** Просыпается после `sleep(interval)`, где `interval` вычислен на предыдущем тике.
 
+**Внешний ввод (файл):** если задан `general.external_input_file` и в файле есть непустой UTF-8 текст, **после** проверки кулдауна/доступности LLM (и до выбора триггера) вызывается `apply_impulse("user_message")`, текст читается и передаётся в `SparkEvent.metadata["external_input"]` и в Jinja2 как `external_input`. После **успешного** `emit` файл по умолчанию очищается. Подробно: [CONFIG_SCHEMA.md](CONFIG_SCHEMA.md) § `general`, [INTENT_GENERATOR.md](INTENT_GENERATOR.md).
+
 ```python
 while self.running:
     elapsed = time.monotonic() - self.last_tick_time

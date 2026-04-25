@@ -43,20 +43,17 @@ Output Channel (консоль / Telegram / файл)
 - **Бесконечная расширяемость** — каждый компонент подключается через интерфейс. Новые «органы чувств», типы памяти, модели поведения добавляются без переписывания ядра.
 - **LLM-агностичность** — работает с любой моделью через адаптер.
 - **Каждая версия работает** — нет этапов «только на бумаге». Прогресс = запускаемый код.
+- **Внешний сигнал без stdin** — опциональный файл `general.external_input_file` (текст подмешивается в промпты как Jinja-переменная `external_input`, см. [CONFIG_SCHEMA.md](docs/CONFIG_SCHEMA.md) § `general` и [QUICKSTART.md](docs/QUICKSTART.md)).
 
 ## Версии
 
 | Что | Где | Текущее значение |
 |-----|-----|------------------|
-| Продукт (SemVer) | [`VERSION`](VERSION) → `PRODUCT_VERSION` | **0.2.0** — исполняемое ядро (`python -m iskra`), MVP в развитии |
-| Комплект документов | [`VERSION`](VERSION) → `DOCUMENTATION_BUNDLE` | **1.0.1** |
+| Продукт (SemVer) | [`VERSION`](VERSION) → `PRODUCT_VERSION` | **0.3.0** — библиотечный публичный API, CLI `iskra` / `python -m iskra` |
+| Комплект документов | [`VERSION`](VERSION) → `DOCUMENTATION_BUNDLE` | **1.2.0** |
 | Схема `config.yaml` | [`VERSION`](VERSION) → `CONFIG_SCHEMA_VERSION` и поле `schema_version` в [`config.yaml`](config.yaml) | **1** |
 
-Правила обновления: [docs/VERSIONING.md](docs/VERSIONING.md). Дорожная карта возможностей кода: [docs/ROADMAP.md](docs/ROADMAP.md).
-
-## Поиск и видимость на GitHub
-
-GitHub **не хранит** темы (topics) и краткое описание репозитория в git — их нужно указать на сайте: **About → Description** и **About → Topics**. Готовый чеклист, список тем и пояснения: **[docs/GITHUB_DISCOVERY.md](docs/GITHUB_DISCOVERY.md)**. В корне добавлен **[CITATION.cff](CITATION.cff)** для цитирования и каталогов ПО (после создания репо замените `PLACEHOLDER` на реальный URL).
+Правила обновления: [docs/VERSIONING.md](docs/VERSIONING.md). Дорожная карта: [docs/ROADMAP.md](docs/ROADMAP.md). Стабильный API для внешних пакетов: [docs/PUBLIC_API.md](docs/PUBLIC_API.md), история: [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 ## Документация
 
@@ -64,17 +61,39 @@ GitHub **не хранит** темы (topics) и краткое описани�
 
 **С нуля до первого запуска:** [docs/QUICKSTART.md](docs/QUICKSTART.md).
 
+### Использование как библиотеки (другой репозиторий, Iskra-2+)
+
+Установите пакет (`pip install iskra` или из VCS), затем соберите цикл в коде:
+
+```python
+import asyncio
+from iskra import MainLoop, load_config
+
+def run() -> None:
+    config = load_config("config.yaml")
+    loop = MainLoop(config)
+    asyncio.run(loop.run())
+
+if __name__ == "__main__":
+    run()
+```
+
+Список стабильных имён, правила SemVer, исключения `load_config` и пример `pyproject.toml` с зависимостью: **[docs/PUBLIC_API.md](docs/PUBLIC_API.md)**. План «Iskra1 — основа, Iskra2 — отдельный репо»: [docs/TODO_LIBRARY_AND_ISKRA2.md](docs/TODO_LIBRARY_AND_ISKRA2.md) (для downsteam-пакета смотрите раздел 2).
+
 ### Архитектура и дизайн
 | Файл | Содержание |
 |------|-----------|
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Высокоуровневая архитектура и компоненты |
+| [PUBLIC_API.md](docs/PUBLIC_API.md) | Стабильный публичный API пакета `iskra` (SemVer) |
+| [ISKRA2_REPOSITORY_GUIDE.md](docs/ISKRA2_REPOSITORY_GUIDE.md) | Гайд для **репо Iskra-2+**: как не дублировать ядро, работать с `iskra` |
+| [CHANGELOG.md](docs/CHANGELOG.md) | История релизов пакета `iskra` |
 | [STATE_ENGINE.md](docs/STATE_ENGINE.md) | Математическая модель состояния (OU-процесс) |
 | [TRIGGER_ENGINE.md](docs/TRIGGER_ENGINE.md) | Генератор спонтанных событий (с формулами) |
 | [MEMORY_SYSTEM.md](docs/MEMORY_SYSTEM.md) | Система памяти (с формулами забывания) |
 | [INTENT_GENERATOR.md](docs/INTENT_GENERATOR.md) | Превращение события в «мысль» |
 | [GROK_INTEGRATION.md](docs/GROK_INTEGRATION.md) | LLM Adapter — подключение к моделям |
 | [EVENT_LIFECYCLE.md](docs/EVENT_LIFECYCLE.md) | Полный жизненный цикл события |
-| [CONFIG_SCHEMA.md](docs/CONFIG_SCHEMA.md) | Схема конфигурации (эталон — [`config.yaml`](config.yaml) в корне) |
+| [CONFIG_SCHEMA.md](docs/CONFIG_SCHEMA.md) | Схема `config.yaml`, в т.ч. `general.external_input_file` / `preflight` |
 | [VERSIONING.md](docs/VERSIONING.md) | Нумерация версий продукта, документов и config |
 | [GITHUB_DISCOVERY.md](docs/GITHUB_DISCOVERY.md) | Темы, описание репо, индексация и внешний поиск |
 | [PSYCHOLOGY_MODEL.md](docs/PSYCHOLOGY_MODEL.md) | Биологическая модель: от улитки к человеку |
@@ -104,7 +123,7 @@ GitHub **не хранит** темы (topics) и краткое описани�
 
 ## Статус
 
-**PRODUCT_VERSION 0.2.0** — пакет `iskra` запускается (`py -m pip install -e .`, затем `python -m iskra` из корня с `config.yaml`). Тесты: `py -m pytest tests`. Подробности — [IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md).
+**PRODUCT_VERSION 0.3.0** — `pip install -e .` или `pip install iskra`; из корня с `config.yaml`: `iskra` или `python -m iskra`. Тесты: `py -m pytest tests`. [CHANGELOG](docs/CHANGELOG.md) — `load_config` в библиотеке **не** вызывает `sys.exit`. Подробности — [IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md), [PUBLIC_API.md](docs/PUBLIC_API.md).
 
 ## Лицензия
 

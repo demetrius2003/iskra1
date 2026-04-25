@@ -15,6 +15,24 @@ def test_load_minimal() -> None:
     assert "default" in cfg.intent.user_prompts
 
 
+def test_load_config_missing_file() -> None:
+    with pytest.raises(FileNotFoundError, match="Config file not found"):
+        load_config("/nonexistent/iskra/config-does-not-exist.yaml")
+
+
+def test_load_config_does_not_substitute_in_yaml_comments(tmp_path: Path) -> None:
+    """``${VAR}`` in ``#`` comments must not be expanded (PyYAML drops comments)."""
+    root = Path(__file__).resolve().parent
+    base = (root / "minimal.yaml").read_text(encoding="utf-8")
+    p = tmp_path / "with_comment.yaml"
+    p.write_text(
+        '# Example: secrets via ${NOT_A_REAL_VAR} in real values only\n' + base,
+        encoding="utf-8",
+    )
+    cfg = load_config(p)
+    assert isinstance(cfg, IskraConfig)
+
+
 def test_validate_modulated_by_unknown() -> None:
     from iskra.core.config import StateConfig, StateVariableConfig, TriggerConfig, TriggerIntervalConfig, TriggerTypeConfig
 

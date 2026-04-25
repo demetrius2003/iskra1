@@ -2,8 +2,8 @@
 # После создания репозитория замените PLACEHOLDER на org/user и имя репо.
 cff-version: 1.2.0
 title: Iskra-1
-version: 0.2.0
-date-released: "2026-04-12"
+version: 0.3.0
+date-released: "2026-04-25"
 license: MIT
 repository-code: "https://github.com/PLACEHOLDER/PLACEHOLDER"
 url: "https://github.com/PLACEHOLDER/PLACEHOLDER"

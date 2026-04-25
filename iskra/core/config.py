@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import os
 import re
-import sys
 from pathlib import Path
+from typing import Any, cast
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -138,6 +138,13 @@ class GeneralConfig(BaseModel):
     tick_jitter: float = Field(ge=0.0, le=1.0, default=0.1)
     data_dir: str = "data"
     pid_file: str = "data/iskra.pid"
+    preflight: bool = True
+    """Перед стартом: проверка памяти, путей, доступности LLM (mock пропускает сеть)."""
+    external_input_file: str | None = None
+    """Путь к UTF-8 файлу: перед тиком читаем непустой текст — в промпт (Jinja: ``external_input``) и импульс ``user_message``; пусто = ничего не делаем."""
+    external_input_max_chars: int = Field(8000, ge=1, le=500_000)
+    external_input_clear_after_use: bool = True
+    """После успешного ответа и вывода очистить файл (иначе тот же текст повторится на следующем тике)."""
 
 
 class IskraConfig(BaseModel):
@@ -152,7 +159,7 @@ class IskraConfig(BaseModel):
     general: GeneralConfig = Field(default_factory=GeneralConfig)
 
 
-def _substitute_env(raw: str) -> str:
+def _substitute_env_in_str(raw: str) -> str:
     def replace_env(match: re.Match[str]) -> str:
         var = match.group(1)
         value = os.environ.get(var)
@@ -161,6 +168,17 @@ def _substitute_env(raw: str) -> str:
         return value
 
     return re.sub(r"\$\{(\w+)\}", replace_env, raw)
+
+
+def _deep_substitute_env(obj: object) -> object:
+    """Apply ``${VAR}`` only inside YAML *values* (comments in the file are not parsed)."""
+    if isinstance(obj, str):
+        return _substitute_env_in_str(obj)
+    if isinstance(obj, dict):
+        return {k: _deep_substitute_env(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_deep_substitute_env(x) for x in obj]
+    return obj
 
 
 def validate_cross_config(cfg: IskraConfig) -> None:
@@ -188,23 +206,21 @@ def validate_cross_config(cfg: IskraConfig) -> None:
 
 
 def load_config(path: str | Path) -> IskraConfig:
+    """Load and validate ``config.yaml``. Raises on error (no ``sys.exit``).
+
+    * ``FileNotFoundError`` — path is not a file
+    * ``yaml.YAMLError`` — invalid YAML
+    * ``pydantic.ValidationError`` — invalid model
+    * ``ValueError`` — cross-field checks, empty config, env substitution, etc.
+    """
     p = Path(path)
     if not p.is_file():
-        print(f"Config file not found: {p}", file=sys.stderr)
-        sys.exit(1)
+        raise FileNotFoundError(f"Config file not found: {p}")
     raw = p.read_text(encoding="utf-8")
-    try:
-        raw = _substitute_env(raw)
-        data = yaml.safe_load(raw)
-        cfg = IskraConfig.model_validate(data)
-        validate_cross_config(cfg)
-        return cfg
-    except yaml.YAMLError as e:
-        print(f"YAML parse error: {e}", file=sys.stderr)
-        sys.exit(1)
-    except ValueError as e:
-        print(f"Configuration error: {e}", file=sys.stderr)
-        sys.exit(1)
-    except Exception as e:
-        print(f"Invalid configuration: {e}", file=sys.stderr)
-        sys.exit(1)
+    data = yaml.safe_load(raw)
+    if data is None:
+        raise ValueError("Configuration YAML is empty or null")
+    data = cast(Any, _deep_substitute_env(data))
+    cfg = IskraConfig.model_validate(data)
+    validate_cross_config(cfg)
+    return cfg

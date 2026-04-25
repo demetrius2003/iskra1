@@ -4,11 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "iskra"
-version = "0.2.0"
+version = "0.3.0"
 description = "Autonomous thought loop for LLMs — state, triggers, memory, adapters"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
+keywords = ["llm", "asyncio", "pydantic", "autonomous", "state-machine", "memory"]
 dependencies = [
     "pyyaml>=6.0",
     "pydantic>=2.0",
@@ -19,6 +20,13 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.4"]
+
+[project.urls]
+Repository = "https://github.com/PLACEHOLDER/Iskra1"
+Documentation = "https://github.com/PLACEHOLDER/Iskra1/tree/main/docs"
+
+[project.scripts]
+iskra = "iskra.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["iskra"]

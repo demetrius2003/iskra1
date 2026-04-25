@@ -22,8 +22,12 @@ class SparkEvent:
     state_snapshot: dict[str, float]       # текущие значения State Engine
     memory_context: list[MemoryRecord]     # извлечённые воспоминания (может быть [])
     timestamp: datetime                    # UTC
-    metadata: dict                         # произвольные данные от триггера
+    metadata: dict                         # произвольные данные; ядро может записать ``external_input`` (см. ниже)
 ```
+
+### Внешний ввод из файла (`general.external_input_file`)
+
+Если в конфиге задан путь к файлу и в нём **непустой** UTF-8 текст, `MainLoop` перед триггером кладёт его в `metadata["external_input"]` и вызывает импульс `user_message` (см. [CONFIG_SCHEMA.md](CONFIG_SCHEMA.md) § `general`, [QUICKSTART.md](QUICKSTART.md) §6). **Intent Generator** в шаблоны передаёт это же поле в Jinja как **`external_input`** (строка; пусто, если ввода на этом тике не было). В `config.yaml` обычно используют `{% if external_input %}...{% endif %}` в `system_prompt_template` и в `user_prompts.*`.
 
 ## Выход
 
@@ -69,10 +73,11 @@ class IntentPayload:
 | `meta_reflection`  | `Ты задумался о том, как устроено твоё собственное мышление`|
 | `default`          | `У тебя возникла мысль: {{ context }}`                     |
 
-Переменные в шаблонах:
-- `{{ state }}` — dict переменных состояния
-- `{{ context }}` — строка контекста от триггера (тема, воспоминание, прошлый ответ)
-- `{{ memories }}` — список извлечённых воспоминаний
+Переменные в шаблонах (и в **system**, и в **user**):
+- `{{ state }}` — dict переменных состояния (в **system** чаще итерируют `state.items()`);
+- `{{ context }}` — строка контекста от триггера (тема, воспоминание, прошлый ответ);
+- `{{ memories }}` — список извлечённых воспоминаний;
+- `{{ external_input }}` — текст из `general.external_input_file` на **этом** тике, либо пустая строка, если ввода не было.
 
 Если шаблон для конкретного `trigger_type` не найден — используется `default`.
 

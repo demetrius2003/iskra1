@@ -1,0 +1,101 @@
+# Публичный API пакета `iskra`
+
+**Версия документа:** 1.0  
+**Продукт (SemVer):** см. `iskra.__version__` и [VERSIONING.md](VERSIONING.md)
+
+Этот документ описывает **стабильный контракт** для внешних проектов (в том числе **Iskra-2+** в отдельном репозитории), которые ставят `iskra` как зависимость и **не** копируют исходники ядра.
+
+## Правила совместимости
+
+- **MAJOR (X.0.0):** снятие или переименование имён из `iskra.__all__`, несовместимые изменения сигнатур публичных функций/классов, смена обязательных полей [CONFIG_SCHEMA](CONFIG_SCHEMA.md) (см. `CONFIG_SCHEMA_VERSION` в [VERSION](../VERSION)).
+- **MINOR (0.X.0):** новые **необязательные** поля в конфиге, новые имена **добавляются** в `__all__` без ломки старых импортов, новые модули.
+- **PATCH (0.0.X):** исправления багов без изменения контракта.
+
+Импорты **только** из перечня ниже (или с полным путём к тем же модулям) считаются поддерживаемыми. Всё остальное — **внутренний API** и может меняться в minor.
+
+## Стабильные точки импорта
+
+### Корень пакета
+
+```python
+from iskra import (
+    __version__,  # строка SemVer
+    # Конфигурация
+    IskraConfig,
+    load_config,
+    validate_cross_config,
+    # Ядро цикла
+    MainLoop,
+    EventLog,
+    # Модели данных
+    EventLogEntry,
+    IntentPayload,
+    LLMResponse,
+    MemoryRecord,
+    SparkEvent,
+    StateSnapshot,
+    # Фабрики
+    create_llm_adapter,
+    create_memory_store,
+    create_output_channel,
+    create_trigger_types,
+    PreflightError,
+    preflight,
+    # Протоколы и типовые исключения LLM
+    LLMAdapter,
+    LLMError,
+    LLMNetworkError,
+    LLMRateLimitError,
+    LLMTimeoutError,
+    MemoryStore,
+    OutputChannel,
+    TriggerType,
+)
+```
+
+Список дублирует `iskra.__all__` в коде.
+
+### `load_config` и CLI
+
+- **`load_config(path)`** (библиотека) при ошибке **выбрасывает исключения** (`FileNotFoundError`, `yaml.YAMLError`, `pydantic.ValidationError`, `ValueError` и т.д.), а не завершает процесс. Это поведение с **0.3.0**.
+- **`python -m iskra`** и команда консоли **`iskra`**: оформляют ошибки, печатают в `stderr` и выходят с кодом 1. См. [cli.py](../iskra/cli.py).
+
+### Конфигурация
+
+- Эталонный полный пример: [`config.yaml`](../config.yaml) в корне репозитория.
+- Минимальный пример для тестов/CI: [tests/minimal.yaml](../tests/minimal.yaml).
+- Схема полей: [CONFIG_SCHEMA.md](CONFIG_SCHEMA.md), в том числе **`general.external_input_file`** (внешний UTF-8 в тик), **`general.preflight`**.
+
+## Не считается публичным API
+
+Свободно рефакторится между minor, если не задокументировано иначе:
+
+- внутренние модули: `iskra.core.state_engine`, `iskra.core.trigger_engine`, `iskra.core.intent_generator` (кроме явно экспортируемого `MainLoop` и конфига);
+- реализации адаптеров: `iskra.llm.ollama_adapter`, …;
+- приватные имена, начинающиеся с `_`;
+- структура тестов и примеры в `tests/`;
+- **не** импортируйте из `iskra` символы, не входящие в `__all__`, если хотите устойчивость к обновлениям (или зафиксируйте верхнюю границу версии: `iskra>=0.3,<0.4`).
+
+Расширение через **собственные** классы, реализующие протоколы `MemoryStore`, `LLMAdapter`, `OutputChannel`, `TriggerType`, — нормальный путь (см. [ARCHITECTURE.md](ARCHITECTURE.md)).
+
+## Сборка и зависимость в другом репозитории
+
+```bash
+pip install "iskra>=0.3.0"
+# или с VCS, по тегу:
+pip install "iskra @ git+https://github.com/your-org/Iskra1.git@v0.3.0"
+```
+
+В `pyproject.toml` downstream-пакета, например:
+
+```toml
+[project]
+dependencies = [
+  "iskra>=0.3,<1",
+]
+```
+
+## Связь с дорожной картой
+
+- План библиотечной «основы» и Iskra-2: [TODO_LIBRARY_AND_ISKRA2.md](TODO_LIBRARY_AND_ISKRA2.md)
+- Changelog: [CHANGELOG.md](CHANGELOG.md)

@@ -95,6 +95,39 @@ class MainLoop:
         except OSError:
             pass
 
+    def _read_external_input_text(self) -> str | None:
+        """Текст из ``general.external_input_file`` или None (нет файла, пусто, ошибка)."""
+        p = self.config.general.external_input_file
+        if not p:
+            return None
+        path = Path(p)
+        if not path.is_file():
+            return None
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except OSError as e:
+            logger.warning("external input: не прочитать %s: %s", path, e)
+            return None
+        text = raw.strip()
+        if not text:
+            return None
+        max_c = self.config.general.external_input_max_chars
+        if len(text) > max_c:
+            logger.warning("external input: обрезано до %d символов", max_c)
+            text = text[:max_c]
+        return text
+
+    def _clear_external_input_file(self) -> None:
+        p = self.config.general.external_input_file
+        if not p or not self.config.general.external_input_clear_after_use:
+            return
+        path = Path(p)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("", encoding="utf-8")
+        except OSError as e:
+            logger.warning("external input: не очистить %s: %s", path, e)
+
     def _load_seed_memories(self) -> None:
         path = self.config.memory.initial_memories_file
         if not path:
@@ -158,12 +191,24 @@ class MainLoop:
             self.last_tick_time = time.monotonic()
             return
 
+        external_text: str | None = self._read_external_input_text()
+        if external_text:
+            self.state_engine.apply_impulse("user_message")
+            logger.info("внешний ввод из файла: %d символов", len(external_text))
+        state_before = self.state_engine.snapshot()
+
         event: SparkEvent | None = None
         try:
             event = self.trigger_engine.evaluate(state_before)
             if event is None:
                 self.last_tick_time = time.monotonic()
                 return
+
+            if external_text:
+                event = replace(
+                    event,
+                    metadata={**event.metadata, "external_input": external_text},
+                )
 
             intent = self.intent_generator.generate(event)
 
@@ -225,6 +270,9 @@ class MainLoop:
                 )
             )
 
+            if external_text:
+                self._clear_external_input_file()
+
             self._thought_count += 1
             logger.info(
                 "thought #%d trigger=%s model=%s",
@@ -242,6 +290,10 @@ class MainLoop:
             self.tick_count += 1
 
     async def run(self) -> None:
+        if self.config.general.preflight:
+            from iskra.core.preflight import preflight
+
+            await preflight(self)
         self._write_pid_file()
         self._load_seed_memories()
         self.state_engine.apply_impulse("system_startup")

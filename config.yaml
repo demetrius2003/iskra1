@@ -133,18 +133,23 @@ intent:
     {% for var_name, var_value in state.items() %}
     - {{ var_name }}: {{ "%.2f"|format(var_value) }}
     {% endfor %}
+    {% if external_input %}
+    Снаружи в канал вставлен текст (Telegram, файл вручную — что угодно). Учти по смыслу;
+    это не обязан быть «человек», но сигнал реальный:
+    {{ external_input }}
+    {% endif %}
 
   user_prompts:
-    new_topic: "Тебе вдруг стало интересно: {{ context }}"
-    recall_memory: "Ты вдруг вспомнил: \"{{ context }}\""
-    continue_context: "Ты продолжаешь думать о: {{ context }}"
-    meta_reflection: "Ты задумался о том, как устроено твоё собственное мышление."
-    default: "У тебя возникла мысль: {{ context }}"
+    new_topic: "Тебе вдруг стало интересно: {{ context }}{% if external_input %}\n\n(Во внимание, пришло снаружи: {{ external_input }}){% endif %}"
+    recall_memory: "Ты вдруг вспомнил: \"{{ context }}\"{% if external_input %}\n\n(Снаружи: {{ external_input }}){% endif %}"
+    continue_context: "Ты продолжаешь думать о: {{ context }}{% if external_input %}\n\n(Снаружи: {{ external_input }}){% endif %}"
+    meta_reflection: "Ты задумался о том, как устроено твоё собственное мышление.{% if external_input %}\n\n(Сообщение снаружи, если хочешь — вплети: {{ external_input }}){% endif %}"
+    default: "У тебя возникла мысль: {{ context }}{% if external_input %}\n\n(Снаружи: {{ external_input }}){% endif %}"
 
   max_response_tokens: 500
 
 llm:
-  adapter: "mock"
+  adapter: "gigachat"
   settings:
     mock:
       response_template: "[MOCK] Мысль зафиксирована. Триггер: {trigger_type}"
@@ -156,17 +161,17 @@ llm:
     # GigaChat (Сбер): OAuth + chat/completions. Секреты — через ${VAR}.
     # Файл russian_trusted_root_ca.cer — с портала Сбера (документация GigaChat); положите, например:
     #   certs/russian_trusted_root_ca.cer  или в корень проекта (как в gigarag5.py).
-    # gigachat:
-    #   client_id: "${GIGACHAT_CLIENT_ID}"
-    #   client_secret: "${GIGACHAT_CLIENT_SECRET}"
-    #   # или один ключ из личного кабинета (Base64 от id:secret), как GIGACHAT_CREDENTIALS в gigarag5:
-    #   # credentials_base64: "${GIGACHAT_CREDENTIALS_B64}"
-    #   scope: "GIGACHAT_API_PERS"
-    #   model: "GigaChat"
-    #   ca_bundle_file: "certs/russian_trusted_root_ca.cer"
-    #   timeout_seconds: 120
-    #   verify_ssl: true
-    #   # verify_ssl: false  — только если без CA не подключается (небезопасно)
+    gigachat:
+      # client_id: "${GIGACHAT_CLIENT_ID}"
+      # client_secret: "${GIGACHAT_CLIENT_SECRET}"
+      # или один ключ из личного кабинета (Base64 от id:secret), как GIGACHAT_CREDENTIALS в gigarag5:
+      credentials_base64: "N2RkNTgyNzktNTU5Ni00ZmVjLWJkNjEtNzcwYzYzZGFjMzhiOjJkODQ1YjZlLTcwMjctNDQ0NC1iYmJjLTNhZmZiYjJlODY3ZA=="
+      scope: "GIGACHAT_API_PERS"
+      model: "GigaChat"
+      ca_bundle_file: "certs/russian_trusted_root_ca.cer"
+      timeout_seconds: 120
+      verify_ssl: true
+      # verify_ssl: false  — только если без CA не подключается (небезопасно)
     # YandexGPT (Yandex Cloud Foundation Models):
     # yandexgpt:
     #   folder_id: "${YC_FOLDER_ID}"
@@ -205,7 +210,14 @@ logging:
     rotate_mb: 100
 
 general:
+  # Предстарт: память, пути, доступность LLM (для mock — только явное «без сети»)
+  preflight: true
+  # Внешний UTF-8 в файл: перед тиком — в промпты (external_input) + импульс user_message
+  external_input_file: null
+  external_input_max_chars: 8000
+  external_input_clear_after_use: true
   decay_every_n_ticks: 10
   tick_jitter: 0.1
   data_dir: "data"
   pid_file: "data/iskra.pid"
+  external_input_file: "data/incoming.txt"
