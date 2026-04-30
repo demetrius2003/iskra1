@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "iskra"
-version = "0.3.0"
+version = "0.4.4"
 description = "Autonomous thought loop for LLMs — state, triggers, memory, adapters"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -19,7 +19,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "ruff>=0.4"]
+dev = ["pytest>=8.0", "ruff>=0.4", "networkx>=3.2"]
+# Расширенная память (LanceDB, граф, эмбеддинги) — реализация по docs/TODO_MEMORY_AGENCY.md
+memory = ["lancedb>=0.14", "networkx>=3.2", "sentence-transformers>=2.2"]
 
 [project.urls]
 Repository = "https://github.com/PLACEHOLDER/Iskra1"

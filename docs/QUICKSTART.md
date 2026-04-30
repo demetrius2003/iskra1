@@ -81,6 +81,44 @@ py -m iskra --config tests/minimal.yaml
 
 ---
 
+## 4b. Lance-память, agency и миграция
+
+1. Установка зависимостей: `py -m pip install -e ".[memory]"` (LanceDB, эмбеддинги, NetworkX).
+2. В `config.yaml`: `memory.backend: lance`, `memory.v2.enabled: true`, пути `memory.v2.db_path`, при необходимости `memory.v2.graph_edges_path`, опционально `graph_link_increment` / `graph_max_edge_weight` (взвешенные ассоциации), `agency.level` (0…3) и `agency.l2_importance_floor` для уровня 2. Если **PyTorch не запускается** (Windows / Python 3.14): `memory.v2.embeddings_backend: hash` и при необходимости `hash_embedding_dim: 384` — Lance работает без `sentence-transformers`, но **векторный поиск по смыслу** не будет качественным.
+3. Перенос со старого SQLite: `py -m iskra migrate --config config.yaml` (исходный `.db` не удаляется).  
+   **Если PyTorch не грузится** (на Windows часто `WinError 1114` / DLL, на новых Python колёса `torch` могут быть не готовы): либо поставьте **Python 3.12** и снова `pip install iskra[memory]`, либо миграция **без ML**:  
+   `py -m iskra migrate --config config.yaml --dummy-embeddings` — векторы считаются из хеша текста (семантический поиск по `context` будет бессмысленным; размерность по умолчанию 384, см. `--hash-dim`).
+4. Теги в ответе LLM (`[MEMORY_REQUEST]`, `[MEMORY_UPDATE]`, `[MEMORY_SAVE]`, `[MEMORY_DELETE]` при **L3**) — см. [CONFIG_SCHEMA.md](CONFIG_SCHEMA.md).
+5. Периодическая слияние дублей по тексту (Lance): `general.consolidation_every_n_ticks: 200` (или другое N).
+6. Плановая саморефлексия: `general.self_reflection_every_n_ticks` (например 50), опционально `self_reflection_recall_n`, и шаблон **`intent.user_prompts.self_reflection`** (в Jinja доступен список строк `memories`).
+7. Переменная **emotional_valence** в диапазоне [−1, 1]: в `state.variables` задайте `clamp_min: -1.0`, `clamp_max: 1.0` (см. [CONFIG_SCHEMA.md](CONFIG_SCHEMA.md) § `state.variables`).
+
+Подробнее: [MEMORY_AND_AGENCY.md](MEMORY_AND_AGENCY.md).
+
+---
+
+## 4c. Windows: «починить» PyTorch (`WinError 1114`, `c10.dll`)
+
+Это **не баг Iskra**: не грузится нативная библиотека `torch` (или зависимость). Пока `import torch` падает, для Lance с смыслом эмбеддингов остаётся **`memory.v2.embeddings_backend: hash`** или отдельное окружение ниже.
+
+**Сделайте по порядку:**
+
+1. **Microsoft Visual C++ Redistributable (x64)** — последняя «VC++ 2015–2022» с [страницы Microsoft](https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist) (прямая ссылка на x64 часто: [aka.ms/vc14/vc_redist.x64.exe](https://aka.ms/vc14/vc_redist.x64.exe)). Установите, **перезагрузите** ПК, снова `py -c "import torch"`.
+
+2. **Чистая переустановка CPU-сборки** под вашу версию Python — команда с [pytorch.org/get-started](https://pytorch.org/get-started) (Windows, Pip, CUDA: None), например:
+   ```bat
+   py -m pip uninstall -y torch torchvision torchaudio
+   py -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+   ```
+
+3. **Надёжный вариант** — отдельный **Python 3.12** (с [python.org](https://www.python.org/downloads/)), новый venv, затем `pip install iskra[memory]` (или `pip install -e ".[memory]"` из клона). Для 3.14 колёса бывают свежими и капризными; 3.12 чаще без сюрпризов.
+
+4. Если в том же процессе используете **PyQt / PySide**, импортируйте **`torch` раньше GUI** — иначе на части сборок снова `1114` (см. [pytorch/pytorch#166628](https://github.com/pytorch/pytorch/issues/166628)).
+
+После успешного `import torch` в `config.yaml` верните **`memory.v2.embeddings_backend: sentence_transformers`** (и при необходимости удалите/пересоздайте каталог `memory.v2.db_path`, если менялась размерность вектора).
+
+---
+
 ## 5. Режим с Ollama
 
 1. Установите и запустите Ollama, подтяните модель, например: `ollama pull llama3:8b`.

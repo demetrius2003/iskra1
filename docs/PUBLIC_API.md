@@ -1,7 +1,9 @@
 # Публичный API пакета `iskra`
 
-**Версия документа:** 1.0  
+**Версия документа:** 1.2  
 **Продукт (SemVer):** см. `iskra.__version__` и [VERSIONING.md](VERSIONING.md)
+
+**Актуальность:** перечень ниже согласован с `iskra.__init__.py` → **`__all__`** (на момент **0.3.0**). Регрессия: `py -m pytest tests/test_public_api.py` — падает, если в коде добавили/убрали публичный символ, а документ или `__all__` не обновили.
 
 Этот документ описывает **стабильный контракт** для внешних проектов (в том числе **Iskra-2+** в отдельном репозитории), которые ставят `iskra` как зависимость и **не** копируют исходники ядра.
 
@@ -53,7 +55,11 @@ from iskra import (
 )
 ```
 
-Список дублирует `iskra.__all__` в коде.
+Список дублирует `iskra.__all__` в коде (удобно сравнить построчно с [`iskra/__init__.py`](../iskra/__init__.py)).
+
+Явный список имён `__all__` в порядке кода:
+
+`__version__`, `EventLog`, `EventLogEntry`, `IntentPayload`, `IskraConfig`, `LLMResponse`, `LLMAdapter`, `LLMError`, `LLMNetworkError`, `LLMRateLimitError`, `LLMTimeoutError`, `MainLoop`, `MemoryRecord`, `PreflightError`, `MemoryStore`, `OutputChannel`, `SparkEvent`, `StateSnapshot`, `TriggerType`, `create_llm_adapter`, `create_memory_store`, `create_output_channel`, `create_trigger_types`, `load_config`, `preflight`, `validate_cross_config`.
 
 ### `load_config` и CLI
 
@@ -95,7 +101,17 @@ dependencies = [
 ]
 ```
 
+## Внешний репозиторий поверх `iskra` (форк, отдельный пакет)
+
+Основная линия развития (**память + agency**) ведётся **в репозитории Iskra-1** — см. [MEMORY_AND_AGENCY.md](MEMORY_AND_AGENCY.md), [TODO_MEMORY_AGENCY.md](TODO_MEMORY_AGENCY.md). Если вы всё же ведёте **свой** git-проект, который только **подключает** ядро:
+
+- Зависимость: `pip install iskra` или `iskra @ git+…` по тегу; **не** копируйте каталог `iskra/` в свой репо и **не** используйте submodule исходников вместо установки пакета.
+- Импорты — **только** из этого документа (`__all__`); внутренние `iskra.core.*` в проде нестабильны между minor.
+- Расширяйте через **протоколы** (`MemoryStore`, `LLMAdapter`, `OutputChannel`, `TriggerType`), наследование или композицию **`MainLoop`**; не дублируйте цикл тиков вторым `asyncio`-циклом без дизайна.
+- Нужен хук в ядре — **issue/PR** в апстрим Iskra-1, а не «мини-форк» навсегда.
+- CI: тесты против **установленного** `iskra`, без `PYTHONPATH` в чужой клон.
+
 ## Связь с дорожной картой
 
-- План библиотечной «основы» и Iskra-2: [TODO_LIBRARY_AND_ISKRA2.md](TODO_LIBRARY_AND_ISKRA2.md)
-- Changelog: [CHANGELOG.md](CHANGELOG.md)
+- Развитие продукта в одном репо: [ROADMAP.md](ROADMAP.md), [MEMORY_AND_AGENCY.md](MEMORY_AND_AGENCY.md), [TODO_MEMORY_AGENCY.md](TODO_MEMORY_AGENCY.md).
+- Changelog: [CHANGELOG.md](CHANGELOG.md).

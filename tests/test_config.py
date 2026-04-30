@@ -33,6 +33,22 @@ def test_load_config_does_not_substitute_in_yaml_comments(tmp_path: Path) -> Non
     assert isinstance(cfg, IskraConfig)
 
 
+def test_memory_backend_v2_invariant() -> None:
+    from iskra.core.config import MemoryConfig, MemoryV2Config
+
+    with pytest.raises(ValueError, match="v2.enabled"):
+        MemoryConfig(backend="sqlite", v2=MemoryV2Config(enabled=True))
+    with pytest.raises(ValueError, match="v2.enabled"):
+        MemoryConfig(backend="lance", v2=MemoryV2Config(enabled=False))
+
+
+def test_memory_v2_embeddings_backend_invalid() -> None:
+    from iskra.core.config import MemoryV2Config
+
+    with pytest.raises(ValueError, match="embeddings_backend"):
+        MemoryV2Config(embeddings_backend="nope")
+
+
 def test_validate_modulated_by_unknown() -> None:
     from iskra.core.config import StateConfig, StateVariableConfig, TriggerConfig, TriggerIntervalConfig, TriggerTypeConfig
 
@@ -56,3 +72,40 @@ def test_validate_modulated_by_unknown() -> None:
     )
     with pytest.raises(ValueError, match="modulated_by"):
         validate_cross_config(cfg)
+
+
+def test_validate_self_reflection_requires_user_prompt() -> None:
+    from iskra.core.config import GeneralConfig, IntentConfig, MemoryConfig, StateConfig, TriggerConfig, TriggerIntervalConfig, TriggerTypeConfig
+    from iskra.core.config import StateVariableConfig
+
+    state = StateConfig(
+        variables={"x": StateVariableConfig(initial=0.5, mu=0.5, theta=0.1, sigma=0.1)},
+        impulses={},
+        feedback={},
+    )
+    trig = TriggerConfig(
+        interval=TriggerIntervalConfig(min_seconds=1, max_seconds=10, modulated_by=None),
+        types={"t": TriggerTypeConfig(base_weight=1.0)},
+        random_topic_pool=[],
+    )
+    gen = GeneralConfig(self_reflection_every_n_ticks=10)
+    cfg = IskraConfig(
+        schema_version=1,
+        state=state,
+        trigger=trig,
+        memory=MemoryConfig(),
+        intent=IntentConfig(system_prompt_template="s", user_prompts={"default": "d"}),
+        general=gen,
+    )
+    with pytest.raises(ValueError, match="self_reflection"):
+        validate_cross_config(cfg)
+
+    cfg_ok = cfg.model_copy(
+        update={
+            "intent": IntentConfig(
+                system_prompt_template="s",
+                user_prompts={"default": "d", "self_reflection": "x"},
+            )
+        }
+    )
+    validate_cross_config(cfg_ok)

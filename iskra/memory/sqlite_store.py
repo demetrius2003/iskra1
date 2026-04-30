@@ -161,3 +161,35 @@ class SQLiteMemoryStore:
                 return int(row["c"]) if row else 0
         except sqlite3.Error:
             return 0
+
+    def update_importance(self, memory_id: str, importance: float) -> bool:
+        imp = max(0.0, min(1.0, importance))
+        try:
+            with self._lock:
+                cur = self._conn.execute(
+                    "UPDATE memories SET importance = ? WHERE id = ?",
+                    (imp, memory_id),
+                )
+                self._conn.commit()
+                return cur.rowcount > 0
+        except sqlite3.Error as e:
+            logger.warning("memory update_importance failed: %s", e)
+            return False
+
+    def link_memories(self, source_id: str, target_ids: list[str]) -> None:
+        del source_id, target_ids
+        logger.debug("link_memories: SQLite backend — граф не поддерживается")
+
+    def delete_memory(self, memory_id: str) -> bool:
+        try:
+            with self._lock:
+                cur = self._conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+                self._conn.commit()
+                return cur.rowcount > 0
+        except sqlite3.Error as e:
+            logger.warning("memory delete failed: %s", e)
+            return False
+
+    def consolidate(self) -> None:
+        """SQLite: заглушка."""
+        return

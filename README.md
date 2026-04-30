@@ -49,11 +49,13 @@ Output Channel (консоль / Telegram / файл)
 
 | Что | Где | Текущее значение |
 |-----|-----|------------------|
-| Продукт (SemVer) | [`VERSION`](VERSION) → `PRODUCT_VERSION` | **0.3.0** — библиотечный публичный API, CLI `iskra` / `python -m iskra` |
-| Комплект документов | [`VERSION`](VERSION) → `DOCUMENTATION_BUNDLE` | **1.2.0** |
+| Продукт (SemVer) | [`VERSION`](VERSION) → `PRODUCT_VERSION` | **0.4.4** — взвешенный граф памяти, `self_reflection`, agency, Lance, `iskra migrate` |
+| Комплект документов | [`VERSION`](VERSION) → `DOCUMENTATION_BUNDLE` | **1.5.1** |
 | Схема `config.yaml` | [`VERSION`](VERSION) → `CONFIG_SCHEMA_VERSION` и поле `schema_version` в [`config.yaml`](config.yaml) | **1** |
 
-Правила обновления: [docs/VERSIONING.md](docs/VERSIONING.md). Дорожная карта: [docs/ROADMAP.md](docs/ROADMAP.md). Стабильный API для внешних пакетов: [docs/PUBLIC_API.md](docs/PUBLIC_API.md), история: [docs/CHANGELOG.md](docs/CHANGELOG.md).
+Правила обновления: [docs/VERSIONING.md](docs/VERSIONING.md). Дорожная карта: [docs/ROADMAP.md](docs/ROADMAP.md). Стабильный API: [docs/PUBLIC_API.md](docs/PUBLIC_API.md), история: [docs/CHANGELOG.md](docs/CHANGELOG.md). **Бренд остаётся Iskra-1**; SemVer продолжается (**0.4.0** и далее). Целевая линия «долгая память + agency»: [docs/MEMORY_AND_AGENCY.md](docs/MEMORY_AND_AGENCY.md), задачи: [docs/TODO_MEMORY_AGENCY.md](docs/TODO_MEMORY_AGENCY.md).
+
+Расширенная векторная память (LanceDB): `pip install iskra[memory]`, в `config.yaml` — `memory.backend: lance`, `memory.v2.enabled: true`; при отсутствии рабочего PyTorch — **`memory.v2.embeddings_backend: hash`** или починка окружения ([QUICKSTART §4c](docs/QUICKSTART.md), [CONFIG_SCHEMA.md](docs/CONFIG_SCHEMA.md)). Перенос со старого SQLite: `iskra migrate --config config.yaml` (или `--dummy-embeddings`). Плановая саморефлексия цикла: `general.self_reflection_every_n_ticks` и `intent.user_prompts.self_reflection` — см. [MEMORY_AND_AGENCY.md](docs/MEMORY_AND_AGENCY.md).
 
 ## Документация
 
@@ -61,7 +63,7 @@ Output Channel (консоль / Telegram / файл)
 
 **С нуля до первого запуска:** [docs/QUICKSTART.md](docs/QUICKSTART.md).
 
-### Использование как библиотеки (другой репозиторий, Iskra-2+)
+### Использование как библиотеки (другой репозиторий)
 
 Установите пакет (`pip install iskra` или из VCS), затем соберите цикл в коде:
 
@@ -78,18 +80,19 @@ if __name__ == "__main__":
     run()
 ```
 
-Список стабильных имён, правила SemVer, исключения `load_config` и пример `pyproject.toml` с зависимостью: **[docs/PUBLIC_API.md](docs/PUBLIC_API.md)**. План «Iskra1 — основа, Iskra2 — отдельный репо»: [docs/TODO_LIBRARY_AND_ISKRA2.md](docs/TODO_LIBRARY_AND_ISKRA2.md) (для downsteam-пакета смотрите раздел 2).
+Список стабильных имён, правила SemVer, исключения `load_config`, пример `pyproject.toml` и **правила для внешнего репо/форка**: **[docs/PUBLIC_API.md](docs/PUBLIC_API.md)**.
 
 ### Архитектура и дизайн
 | Файл | Содержание |
 |------|-----------|
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Высокоуровневая архитектура и компоненты |
 | [PUBLIC_API.md](docs/PUBLIC_API.md) | Стабильный публичный API пакета `iskra` (SemVer) |
-| [ISKRA2_REPOSITORY_GUIDE.md](docs/ISKRA2_REPOSITORY_GUIDE.md) | Гайд для **репо Iskra-2+**: как не дублировать ядро, работать с `iskra` |
 | [CHANGELOG.md](docs/CHANGELOG.md) | История релизов пакета `iskra` |
 | [STATE_ENGINE.md](docs/STATE_ENGINE.md) | Математическая модель состояния (OU-процесс) |
 | [TRIGGER_ENGINE.md](docs/TRIGGER_ENGINE.md) | Генератор спонтанных событий (с формулами) |
 | [MEMORY_SYSTEM.md](docs/MEMORY_SYSTEM.md) | Система памяти (с формулами забывания) |
+| [MEMORY_AND_AGENCY.md](docs/MEMORY_AND_AGENCY.md) | Цель: долговременная память + agency (один репо, SemVer 0.4+) |
+| [TODO_MEMORY_AGENCY.md](docs/TODO_MEMORY_AGENCY.md) | Чеклист доработки памяти/agency |
 | [INTENT_GENERATOR.md](docs/INTENT_GENERATOR.md) | Превращение события в «мысль» |
 | [GROK_INTEGRATION.md](docs/GROK_INTEGRATION.md) | LLM Adapter — подключение к моделям |
 | [EVENT_LIFECYCLE.md](docs/EVENT_LIFECYCLE.md) | Полный жизненный цикл события |

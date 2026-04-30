@@ -29,6 +29,10 @@ class SparkEvent:
 
 Если в конфиге задан путь к файлу и в нём **непустой** UTF-8 текст, `MainLoop` перед триггером кладёт его в `metadata["external_input"]` и вызывает импульс `user_message` (см. [CONFIG_SCHEMA.md](CONFIG_SCHEMA.md) § `general`, [QUICKSTART.md](QUICKSTART.md) §6). **Intent Generator** в шаблоны передаёт это же поле в Jinja как **`external_input`** (строка; пусто, если ввода на этом тике не было). В `config.yaml` обычно используют `{% if external_input %}...{% endif %}` в `system_prompt_template` и в `user_prompts.*`.
 
+### Плановая рефлексия (`self_reflection`)
+
+Если задано `general.self_reflection_every_n_ticks`, ядро **иногда** формирует событие с `trigger_type: "self_reflection"` само (без взвешенного выбора триггера): в `memory_context` попадает до `self_reflection_recall_n` записей из памяти. В Jinja для этого ключа в `user_prompts` список **`memories`** — строки содержимого; **`context`** для этого типа пустой (как у `meta_reflection`).
+
 ## Выход
 
 Intent Generator формирует **IntentPayload** — структурированный объект, содержащий пару промптов:

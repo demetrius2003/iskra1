@@ -49,14 +49,17 @@ class OUStateEngine:
             x = self._vars[name]
             noise = random.gauss(0.0, 1.0)
             dx = vc.theta * (vc.mu - x) * dt + vc.sigma * sqrt_dt * noise
-            self._vars[name] = _clamp(x + dx, 0.0, 1.0)
+            self._vars[name] = _clamp(x + dx, vc.clamp_min, vc.clamp_max)
 
     def apply_impulse(self, event_type: str) -> None:
         impulses = self._cfg.impulses.get(event_type, {})
         for var_name, delta in impulses.items():
             if var_name not in self._vars:
                 continue
-            self._vars[var_name] = _clamp(self._vars[var_name] + float(delta), 0.0, 1.0)
+            vc = self._cfg.variables[var_name]
+            self._vars[var_name] = _clamp(
+                self._vars[var_name] + float(delta), vc.clamp_min, vc.clamp_max
+            )
 
     def apply_feedback(self, trigger_type: str, llm_response: str) -> None:
         for _rule_name, rule in self._cfg.feedback.items():
@@ -68,7 +71,10 @@ class OUStateEngine:
         for var_name, delta in rule.deltas().items():
             if var_name not in self._vars:
                 continue
-            self._vars[var_name] = _clamp(self._vars[var_name] + float(delta), 0.0, 1.0)
+            vc = self._cfg.variables[var_name]
+            self._vars[var_name] = _clamp(
+                self._vars[var_name] + float(delta), vc.clamp_min, vc.clamp_max
+            )
 
     def snapshot(self) -> StateSnapshot:
         return dict(self._vars)

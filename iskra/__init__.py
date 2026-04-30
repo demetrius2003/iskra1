@@ -1,6 +1,6 @@
 """Iskra-1 — autonomous inner loop for LLMs.
 
-Stable API for downstream packages (e.g. Iskra-2) is defined in
+Stable API for downstream packages is defined in
 ``__all__`` and documented in ``docs/PUBLIC_API.md``."""
 
 from iskra.core.config import IskraConfig, load_config, validate_cross_config
@@ -30,7 +30,7 @@ from iskra.output.protocol import OutputChannel
 from iskra.triggers import create_trigger_types
 from iskra.triggers.protocol import TriggerType
 
-__version__ = "0.3.0"
+__version__ = "0.4.4"
 
 __all__ = [
     "__version__",

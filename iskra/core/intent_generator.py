@@ -65,6 +65,8 @@ class Jinja2IntentGenerator:
             return mc[0].content
         if tt == "meta_reflection":
             return ""
+        if tt == "self_reflection":
+            return ""
         if mc:
             return mc[0].content
         return ""

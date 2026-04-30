@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from iskra.core.main_loop import MainLoop
 
+from iskra.core.config import validate_cross_config
+
 logger = logging.getLogger("iskra.preflight")
 
 
@@ -26,12 +28,35 @@ def _touch_write(path: Path) -> None:
         raise PreflightError(f"нет права на запись: {path}")
 
 
+def _dir_writable(dir_path: Path, ctx: str) -> None:
+    dir_path.mkdir(parents=True, exist_ok=True)
+    if not os.access(dir_path, os.W_OK):
+        raise PreflightError(f"{ctx}: нет записи в каталог {dir_path}")
+
+
+def _file_writable_if_exists(path: Path, ctx: str) -> None:
+    if path.is_file() and not os.access(path, os.W_OK):
+        raise PreflightError(f"{ctx}: нет записи в файл {path}")
+
+
+def _file_readable_if_exists(path: Path, ctx: str) -> None:
+    if path.is_file() and not os.access(path, os.R_OK):
+        raise PreflightError(f"{ctx}: нет чтения {path}")
+
+
 async def preflight(main: MainLoop) -> None:
     """Проверки до PID и цикла. При сбое — :exc:`PreflightError`."""
+    from iskra import __version__ as iskra_version
+
     cfg = main.config
+    validate_cross_config(cfg)
     out: list[str] = []
     ad = main.llm_adapter
     adapter_name = cfg.llm.adapter
+
+    out.append(
+        "конфиг: кросс-валидация OK (триггеры↔state, agency, self_reflection↔промпты и т.д.)"
+    )
 
     # --- Память (СУБД / бэкенд) ---
     try:
@@ -40,7 +65,136 @@ async def preflight(main: MainLoop) -> None:
         raise PreflightError(
             f"память ({cfg.memory.backend}): не удалось прочитать хранилище: {e}"
         ) from e
-    out.append(f"память ({cfg.memory.backend}): OK, записей: {n}")
+    if cfg.memory.backend == "sqlite":
+        out.append(
+            f"память: SQLite — OK, записей: {n} "
+            "(базовый режим: без LanceDB, векторного recall и графа в store; см. QUICKSTART §4b)"
+        )
+    else:
+        v2 = cfg.memory.v2
+        emb_desc = (
+            f"sentence_transformers / {v2.embeddings_model}"
+            if v2.embeddings_backend == "sentence_transformers"
+            else f"hash (dim={v2.hash_embedding_dim}, без PyTorch)"
+        )
+        out.append(
+            f"память: Lance / LanceDB — OK, записей: {n}; "
+            f"memory.v2.db_path={v2.db_path}; эмбеддинги: {emb_desc}"
+        )
+
+    # --- Начальные воспоминания (YAML) ---
+    seed = cfg.memory.initial_memories_file
+    if seed:
+        sp = Path(seed)
+        if not sp.is_file():
+            raise PreflightError(
+                f"memory.initial_memories_file: файл не найден: {sp}"
+            )
+        _file_readable_if_exists(sp, "memory.initial_memories_file")
+        out.append(f"seed memories: OK ({sp})")
+
+    # --- Lance: эмбеддинги, каталог БД, граф ---
+    if cfg.memory.backend == "lance" and cfg.memory.v2.enabled:
+        from iskra.memory.lance_store import LanceMemoryStore
+
+        if not isinstance(main.memory_store, LanceMemoryStore):
+            raise PreflightError(
+                "внутренняя ошибка: для backend=lance ожидается LanceMemoryStore"
+            )
+        lstore = main.memory_store
+        try:
+            dim = lstore.preflight_embedding_probe()
+        except PreflightError:
+            raise
+        except Exception as e:
+            v2 = cfg.memory.v2
+            label = (
+                v2.embeddings_model
+                if v2.embeddings_backend == "sentence_transformers"
+                else f"hash dim={v2.hash_embedding_dim}"
+            )
+            raise PreflightError(f"Lance эмбеддинги ({label}): {e}") from e
+        v2 = cfg.memory.v2
+        if v2.embeddings_backend == "hash":
+            out.append(f"Lance: проба эмбеддингов OK (hash, dim={dim}, без PyTorch)")
+        else:
+            out.append(
+                f"Lance: проба эмбеддингов OK (dim={dim}, sentence-transformers / {v2.embeddings_model})"
+            )
+
+        dbp = Path(cfg.memory.v2.db_path)
+        _dir_writable(dbp, "memory.v2.db_path")
+        out.append(f"Lance: каталог БД доступен на запись ({dbp})")
+
+        extra_g = cfg.memory.v2.recall_graph_extra
+        if extra_g > 0:
+            out.append(
+                f"Lance: recall_graph_extra={extra_g} (к recall подмешиваются соседи по графу)"
+            )
+
+        if cfg.memory.v2.graph_enabled:
+            g = lstore.memory_graph_sidecar
+            if g is None:
+                raise PreflightError(
+                    "memory.v2.graph_enabled=true, но граф не инициализирован. "
+                    "Установите networkx (например pip install iskra[memory])."
+                )
+            gpath = (
+                Path(cfg.memory.v2.graph_edges_path)
+                if cfg.memory.v2.graph_edges_path
+                else dbp / "memory_graph.json"
+            )
+            _dir_writable(gpath.parent, "граф памяти (каталог JSON)")
+            _file_writable_if_exists(gpath, "граф памяти")
+            out.append(
+                f"Lance: граф ассоциаций (NetworkX) OK, JSON={gpath}; "
+                f"link_increment={cfg.memory.v2.graph_link_increment}, "
+                f"max_edge_weight={cfg.memory.v2.graph_max_edge_weight}"
+            )
+        else:
+            out.append("Lance: граф выключен (memory.v2.graph_enabled=false)")
+
+    # --- Внешний ввод (файл) ---
+    ex = cfg.general.external_input_file
+    if ex:
+        ep = Path(ex)
+        _dir_writable(ep.parent, "general.external_input_file")
+        if ep.is_file():
+            _file_readable_if_exists(ep, "general.external_input_file")
+            out.append(f"external_input: OK (чтение {ep})")
+        else:
+            out.append(
+                f"external_input: OK (каталог {ep.parent} доступен, файла ещё нет)"
+            )
+
+    # --- Agency и цикл (общие для SQLite и Lance) ---
+    lv = cfg.agency.level
+    floor = cfg.agency.l2_importance_floor
+    out.append(
+        f"agency: уровень L{lv} (теги [MEMORY_REQUEST]/UPDATE/SAVE/DELETE); "
+        f"l2_importance_floor={floor}"
+    )
+    sr = cfg.general.self_reflection_every_n_ticks
+    if sr:
+        out.append(
+            f"саморефлексия: каждые {sr} успешных тиков → тик self_reflection "
+            f"(recall_n={cfg.general.self_reflection_recall_n})"
+        )
+    else:
+        out.append("саморефлексия: выключена (general.self_reflection_every_n_ticks не задан)")
+    c_every = cfg.general.consolidation_every_n_ticks
+    if c_every:
+        if cfg.memory.backend == "lance":
+            out.append(
+                f"консолидация: каждые {c_every} успешных тиков (Lance — слияние дублей по тексту)"
+            )
+        else:
+            out.append(
+                f"консолидация: в конфиге N={c_every}, но при SQLite store это no-op "
+                "(имеет эффект только с memory.backend=lance)"
+            )
+    elif cfg.memory.backend == "lance":
+        out.append("консолидация: выключена (general.consolidation_every_n_ticks не задан)")
 
     # --- Event log (JSONL) ---
     if cfg.logging.event_log.enabled:
@@ -107,6 +261,10 @@ async def preflight(main: MainLoop) -> None:
             )
         out.append(f"LLM: {adapter_name} — is_available() OK")
 
+    logger.info(
+        "preflight | ========== Iskra-1 предстарт (v%s) ==========",
+        iskra_version,
+    )
     for line in out:
         logger.info("preflight | %s", line)
-    logger.info("preflight | готово. Запускаем основной цикл.")
+    logger.info("preflight | ========== готово, запуск цикла ==========")

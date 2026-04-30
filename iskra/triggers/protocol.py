@@ -1,11 +1,11 @@
 """Trigger type protocol."""
 
-from typing import TYPE_CHECKING, Protocol
+from __future__ import annotations
 
+from typing import Protocol
+
+from iskra.memory.protocol import MemoryStore
 from iskra.models import MemoryRecord, StateSnapshot
-
-if TYPE_CHECKING:
-    from iskra.memory.protocol import MemoryStore
 
 
 class TriggerType(Protocol):

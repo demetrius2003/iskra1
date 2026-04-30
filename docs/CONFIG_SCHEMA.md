@@ -1,9 +1,9 @@
 # Config Schema (Схема конфигурации)
 
-**Версия документа:** 1.3  
+**Версия документа:** 1.5.1  
 **Дата:** 25 апреля 2026  
-**Комплект документации:** 1.2.0 (файл `VERSION` в корне репозитория)  
-**Поле `schema_version` в YAML:** `1` (см. также `CONFIG_SCHEMA_VERSION` в `VERSION`)
+**Комплект документации:** 1.5.1 (файл `VERSION` в корне репозитория)  
+**Поле `schema_version` в YAML:** `1` (см. также `CONFIG_SCHEMA_VERSION` в `VERSION`). Секции расширенной памяти и `agency` ниже — **утверждённый дизайн**; Pydantic примет их после реализации и при необходимости роста `schema_version` (см. [VERSIONING.md](VERSIONING.md)).
 
 ## Назначение
 
@@ -40,10 +40,15 @@ trigger:
 
 # ─── Memory Store ───────────────────────────────────────────
 memory:
-  backend: "sqlite"
+  backend: "sqlite"              # "sqlite" | "lance"
   settings: { ... }
   decay: { ... }
   recall: { ... }
+  v2: { ... }                   # расширенный режим (Lance + эмбеддинги) — см. § ниже
+
+# ─── Agency (уровень прав модели на память) ─────────────────
+agency:
+  level: 1                       # 0 read | 1 suggest | 2 co-manage | 3 full
 
 # ─── Intent Generator ──────────────────────────────────────
 intent:
@@ -70,6 +75,9 @@ logging:
 # ─── General ────────────────────────────────────────────────
 general:
   decay_every_n_ticks: 10
+  consolidation_every_n_ticks: null
+  self_reflection_every_n_ticks: null
+  self_reflection_recall_n: 5
   tick_jitter: 0.1
 ```
 
@@ -102,10 +110,25 @@ state:
 ```
 
 **Ограничения:**
-- `initial`, `mu` ∈ [0.0, 1.0]
+- По умолчанию значения клампятся в **[0.0, 1.0]** (`clamp_min` / `clamp_max` можно задать явно).
+- `initial` и `mu` должны лежать внутри `[clamp_min, clamp_max]` (например валентность **[-1, 1]** для линии «память + agency»).
 - `theta` > 0 (рекомендуется 0.01–0.20)
 - `sigma` > 0 (рекомендуется 0.01–0.20)
 - Хотя бы одна переменная обязательна
+
+Пример **bipolar** переменной:
+
+```yaml
+state:
+  variables:
+    emotional_valence:
+      clamp_min: -1.0
+      clamp_max: 1.0
+      initial: 0.0
+      mu: 0.0
+      theta: 0.05
+      sigma: 0.06
+```
 
 ### state.impulses
 
@@ -259,12 +282,10 @@ trigger:
 
 ```yaml
 memory:
-  backend: "sqlite"            # "sqlite" | "json" | "chroma" (будущее)
+  backend: "sqlite"            # "sqlite" | "lance" (lance — расширенный store; см. § «Расширенная память и agency»)
   settings:
     # Для sqlite:
     db_path: "data/memory.db"
-    # Для json:
-    # file_path: "data/memory.json"
 
   recall:
     default_n: 3               # сколько записей возвращать по умолчанию
@@ -280,6 +301,73 @@ memory:
 
   initial_memories_file: "data/seed_memories.yaml"  # опционально
 ```
+
+**Инвариант конфигурации (MVP расширенного режима):** поддерживаемые сочетания: `backend: sqlite` с `memory.v2.enabled: false` (поведение как в 0.3.x) и `backend: lance` с `memory.v2.enabled: true`. Иные комбинации при реализации дают ошибку валидации, пока не оговорены отдельно.
+
+---
+
+### Расширенная память и agency (утверждено; код — 0.4+)
+
+Дополнительные ключи под [MEMORY_AND_AGENCY.md](MEMORY_AND_AGENCY.md). Установка зависимостей: `pip install iskra[memory]` (LanceDB, NetworkX, sentence-transformers).
+
+```yaml
+memory:
+  backend: "sqlite"                    # переключение на "lance" при включённом v2 — см. инвариант выше
+  # ... settings, recall, decay, initial_memories_file — как раньше ...
+
+  v2:
+    enabled: false
+    db_path: "data/memory_v2"        # каталог/путь хранилища Lance (точная семантика — в реализации)
+    embeddings_model: "sentence-transformers/all-MiniLM-L6-v2"
+    graph_enabled: true               # граф ассоциаций (NetworkX), JSON рядом с Lance
+    graph_edges_path: null          # по умолчанию: <db_path>/memory_graph.json
+    recall_graph_extra: 0           # добавить до N соседей по графу к recall (0 = выкл.)
+    graph_link_increment: 1.0      # вклад в вес ребра при каждом link / теге links
+    graph_max_edge_weight: 1000.0   # потолок веса; при consolidate рёбра суммируются (см. repoint)
+    embeddings_backend: sentence_transformers  # или hash — без PyTorch (см. QUICKSTART)
+    hash_embedding_dim: 384        # только для embeddings_backend: hash
+
+agency:
+  level: 1                           # 0 = read-only | 1 = suggest | 2 = co-manage | 3 = full
+  l2_importance_floor: 0.12          # при level=2: MEMORY_UPDATE importance не ниже этого (L1 и L3 без пола)
+```
+
+Смысл уровней — в [MEMORY_AND_AGENCY.md](MEMORY_AND_AGENCY.md) §5. Парсер ответа LLM исполняет теги памяти только в рамках `agency.level`.
+
+#### Протокол тегов в тексте ответа модели
+
+Тег занимает **одну строку** (или сегмент до перевода строки): префикс в квадратных скобках, затем поля в виде `ключ: значение`, разделённые запятой и пробелом `", "`. Значения:
+
+- Строки — в **двойных кавычках**; внутри строки кавычка как `\"`.
+- Числа — без кавычек (`importance: 0.9`).
+- UUID записи (`id`) — без кавычек в каноническом виде `8-4-4-4-12` **или** в двойных кавычках.
+
+Парсер обязан разбирать поля с учётом кавычек (запятые внутри строки не разделяют поля).
+
+| Тег | Назначение | Формат (после префикса) | Пример |
+|-----|------------|-------------------------|--------|
+| `[MEMORY_REQUEST]` | Семантический/ключевой запрос к store | `query: "<строка>"` | `[MEMORY_REQUEST] query: "root_console"` |
+| `[MEMORY_UPDATE]` | Изменить запись и/или рёбра графа | поля через `", "`; минимум `id`; опционально `importance` и/или `links` (UUID через запятую) | `[MEMORY_UPDATE] id: …, links: 6ba7b810-9dad-11d1-80b4-00c04fd430c8` |
+| `[MEMORY_SAVE]` | Новая запись | минимум `content`; опционально `importance` и др. | `[MEMORY_SAVE] content: "текст", importance: 0.8` |
+| `[MEMORY_DELETE]` | Удалить запись | только при **agency.level ≥ 3**; `id:` UUID | `[MEMORY_DELETE] id: 550e8400-e29b-41d4-a716-446655440000` |
+
+Для **Lance**: раз в `general.consolidation_every_n_ticks` успешных тиков вызывается `consolidate()` — слияние дублей с одинаковым текстом (оставляется запись с максимальным `importance`). SQLite: no-op.
+
+Спонтанный текст без тегов — как в текущем Iskra-1. Дополнительные ключи в тегах могут добавляться в следующих версиях схемы; неизвестные ключи при строгой валидации — предупреждение или ошибка (решение при реализации).
+
+#### Миграция SQLite → Lance
+
+Однократная команда:
+
+```bash
+python -m iskra migrate --config config.yaml
+```
+
+Флаги: `--dummy-embeddings` — без `sentence-transformers`/PyTorch, псевдо-векторы из хеша (для сломанного `torch` на Windows или Python без поддерживаемых колёс); `--hash-dim N` — размерность (8…4096, по умолчанию 384).
+
+Копирует записи из `memory.settings.db_path`, пишет Lance в `memory.v2.db_path`, считает эмбеддинги (или хеш-векторы), **не удаляет** исходный SQLite.
+
+---
 
 **Формат файла начальных воспоминаний (`seed_memories.yaml`):**
 ```yaml
@@ -322,6 +410,10 @@ intent:
       Ты продолжаешь думать о: {{ context }}
     meta_reflection: >
       Ты задумался о том, как устроено твоё собственное мышление.
+    self_reflection: >
+      Плановая пауза: оглянись на недавние воспоминания.
+      {% for m in memories %}- {{ m }}
+      {% endfor %}
     default: >
       У тебя возникла мысль: {{ context }}
 
@@ -331,7 +423,10 @@ intent:
 Шаблоны используют синтаксис Jinja2. Переменные:
 - `{{ state }}` — dict переменных состояния
 - `{{ context }}` — строка контекста от триггера
-- `{{ memories }}` — список извлечённых воспоминаний
+- `{{ memories }}` — список **строк** содержимого воспоминаний, подмешанных в событие (в т.ч. для `trigger_type: self_reflection`)
+- `{{ external_input }}` — внешний ввод с тика (строка; см. § `general`)
+
+Если задано `general.self_reflection_every_n_ticks`, после каждых N **успешных** тиков **следующий** тик создаётся ядром как `SparkEvent` с `trigger_type: self_reflection` (без выбора триггера по весам); в `memory_context` попадает до `self_reflection_recall_n` записей из `memory.recall`. Обязателен ключ **`intent.user_prompts.self_reflection`** (проверка `validate_cross_config`).
 
 ---
 
@@ -430,11 +525,14 @@ logging:
 
 | Поле | Тип | Описание |
 |------|-----|----------|
-| `preflight` | `bool`, по умолчанию `true` | Предстарт: память, пути, доступность LLM. |
+| `preflight` | `bool`, по умолчанию `true` | Предстарт: кросс-валидация конфига, память (SQLite vs **Lance/LanceDB**: эмбеддинги, `v2.db_path`, граф, `recall_graph_extra`), **agency**, **саморефлексия**, **консолидация** (с подсказкой при SQLite), `initial_memories_file`, `external_input_file`, журнал, вывод, LLM. В лог пишется блок `preflight | ========== Iskra-1 предстарт ==========`. |
 | `external_input_file` | `str \| null` | Путь к **UTF-8** файлу с внешним текстом. Если **не** `null` и в файле после `strip()` есть содержимое, на **каждом** тике (после проверки кулдауна и доступности LLM) оно: подмешивается в промпты Jinja2 как `external_input`, вызывается импульс `user_message` к состоянию, копируется в `SparkEvent.metadata["external_input"]`. Подходит для сигнала с Telegram, скрипта, ручного редактора. **Нет** файла или **пусто** — ветка не срабатывает. |
 | `external_input_max_chars` | `int` | Максимальная длина текста (по умолчанию 8000); лишнее обрезается. |
 | `external_input_clear_after_use` | `bool`, по умолчанию `true` | После **успешного** ответа LLM и `output.emit` — записать в файл пустую строку. Если `false` — файл **не** очищается (риск повторов на следующих тиках). При ошибке LLM/вывода — очистка **не** выполняется, текст остаётся для повторной попытки. |
 | `decay_every_n_ticks` | `int ≥ 1` | Каждые N успешных тиков — `memory.decay()`. |
+| `consolidation_every_n_ticks` | `int ≥ 1` или `null` | Раз в N успешных тиков — `memory_store.consolidate()` (Lance: дубли по тексту). `null` — выкл. |
+| `self_reflection_every_n_ticks` | `int ≥ 1` или `null` | После каждых N успешных тиков **следующий** тик — плановая рефлексия (`self_reflection`). Требует `intent.user_prompts.self_reflection`. `null` — выкл. |
+| `self_reflection_recall_n` | `int`, 1…32 | Сколько воспоминаний подмешать в событие плановой рефлексии. |
 | `tick_jitter` | `0.0…1.0` | Случайный множитель к интервалу триггера. |
 | `data_dir` | `str` | Каталог данных. |
 | `pid_file` | `str` | Путь к pid-файлу (двойной запуск). |
@@ -446,6 +544,9 @@ general:
   external_input_max_chars: 8000
   external_input_clear_after_use: true
   decay_every_n_ticks: 10
+  consolidation_every_n_ticks: null   # напр. 200 — консолидация Lance-памяти
+  self_reflection_every_n_ticks: null # напр. 50 — плановая рефлексия
+  self_reflection_recall_n: 5
   tick_jitter: 0.1
   data_dir: "data"
   pid_file: "data/iskra.pid"
@@ -597,6 +698,7 @@ intent:
     recall_memory: "Ты вдруг вспомнил: \"{{ context }}\""
     continue_context: "Ты продолжаешь думать о: {{ context }}"
     meta_reflection: "Ты задумался о том, как устроено твоё собственное мышление."
+    self_reflection: "Пауза для саморефлексии. {% for m in memories %}- {{ m }}\n{% endfor %}"
     default: "У тебя возникла мысль: {{ context }}"
 
   max_response_tokens: 500
@@ -645,6 +747,9 @@ general:
   external_input_max_chars: 8000
   external_input_clear_after_use: true
   decay_every_n_ticks: 10
+  consolidation_every_n_ticks: null
+  self_reflection_every_n_ticks: null
+  self_reflection_recall_n: 5
   tick_jitter: 0.1
   data_dir: "data"
   pid_file: "data/iskra.pid"
@@ -657,13 +762,24 @@ general:
 ## Pydantic-модель валидации (для реализации)
 
 ```python
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 class StateVariableConfig(BaseModel):
-    initial: float = Field(ge=0.0, le=1.0)
-    mu: float = Field(ge=0.0, le=1.0)
+    clamp_min: float = 0.0
+    clamp_max: float = 1.0
+    initial: float
+    mu: float
     theta: float = Field(gt=0.0)
     sigma: float = Field(gt=0.0)
+
+    @model_validator(mode="after")
+    def _bounds(self):
+        if self.clamp_max <= self.clamp_min:
+            raise ValueError("clamp_max must be > clamp_min")
+        for label, val in ("initial", self.initial), ("mu", self.mu):
+            if not (self.clamp_min <= val <= self.clamp_max):
+                raise ValueError(f"{label} out of clamp range")
+        return self
 
 class ImpulseConfig(BaseModel):
     """Произвольный dict: имя_переменной → величина_сдвига."""
@@ -753,6 +869,9 @@ class LoggingConfig(BaseModel):
 
 class GeneralConfig(BaseModel):
     decay_every_n_ticks: int = Field(ge=1, default=10)
+    consolidation_every_n_ticks: int | None = Field(default=None, ge=1)
+    self_reflection_every_n_ticks: int | None = Field(default=None, ge=1)
+    self_reflection_recall_n: int = Field(default=5, ge=1, le=32)
     tick_jitter: float = Field(ge=0.0, le=1.0, default=0.1)
     data_dir: str = "data"
     pid_file: str = "data/iskra.pid"
@@ -761,11 +880,16 @@ class GeneralConfig(BaseModel):
     external_input_max_chars: int = Field(8000, ge=1, le=500_000)
     external_input_clear_after_use: bool = True
 
+class AgencyConfig(BaseModel):
+    level: int = Field(default=1, ge=0, le=3)
+    l2_importance_floor: float = Field(default=0.12, ge=0.0, le=1.0)
+
 class IskraConfig(BaseModel):
     schema_version: int = 1
     state: StateConfig
     trigger: TriggerConfig
     memory: MemoryConfig = MemoryConfig()
+    agency: AgencyConfig = AgencyConfig()
     intent: IntentConfig
     llm: LLMConfig = LLMConfig()
     output: OutputConfig = OutputConfig()

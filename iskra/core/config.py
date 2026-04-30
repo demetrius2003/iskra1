@@ -14,10 +14,23 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 
 class StateVariableConfig(BaseModel):
-    initial: float = Field(ge=0.0, le=1.0)
-    mu: float = Field(ge=0.0, le=1.0)
+    """OU-переменная; по умолчанию кламп [0, 1]. Для ``clamp_min``/``clamp_max`` см. valence [−1, 1]."""
+
+    clamp_min: float = 0.0
+    clamp_max: float = 1.0
+    initial: float
+    mu: float
     theta: float = Field(gt=0.0)
     sigma: float = Field(gt=0.0)
+
+    @model_validator(mode="after")
+    def initial_mu_in_clamp(self) -> StateVariableConfig:
+        if self.clamp_max <= self.clamp_min:
+            raise ValueError("state variable clamp_max must be > clamp_min")
+        for label, val in ("initial", self.initial), ("mu", self.mu):
+            if not (self.clamp_min <= val <= self.clamp_max):
+                raise ValueError(f"{label} must be within [clamp_min, clamp_max]")
+        return self
 
 
 class FeedbackRuleConfig(BaseModel):
@@ -88,12 +101,68 @@ class MemoryDecayConfig(BaseModel):
     recall_protection: float = Field(ge=1.0, default=1.5)
 
 
+class MemoryV2Config(BaseModel):
+    """Расширенное хранилище (Lance + эмбеддинги). См. docs/CONFIG_SCHEMA.md."""
+
+    enabled: bool = False
+    db_path: str = "data/memory_v2"
+    embeddings_backend: str = "sentence_transformers"
+    """``sentence_transformers`` (нужен PyTorch) или ``hash`` — псевдо-векторы без ML (Windows/Python без torch)."""
+    embeddings_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    hash_embedding_dim: int = Field(default=384, ge=8, le=4096)
+    """Размерность при ``embeddings_backend: hash`` (лучше совпадать с целевой моделью, напр. 384)."""
+    graph_enabled: bool = True
+    """Граф ассоциаций (NetworkX), файл рядом с Lance."""
+    graph_edges_path: str | None = None
+    """Путь к JSON с рёбрами; по умолчанию ``<db_path>/memory_graph.json``."""
+    recall_graph_extra: int = Field(default=0, ge=0, le=32)
+    """Добавить до N записей-соседей по графу к результату recall (после основного отбора)."""
+    graph_link_increment: float = Field(default=1.0, gt=0.0, le=100.0)
+    """На сколько увеличить вес ребра при каждом ``link_memories`` / теге ``links`` (новое ребро = этот инкремент)."""
+    graph_max_edge_weight: float = Field(default=1000.0, ge=1.0)
+    """Верхняя граница веса ребра (усиление ассоциации, слияние при ``repoint``)."""
+
+    @field_validator("embeddings_backend")
+    @classmethod
+    def embeddings_backend_known(cls, v: str) -> str:
+        allowed = ("sentence_transformers", "hash")
+        if v not in allowed:
+            raise ValueError(
+                f"memory.v2.embeddings_backend must be one of {allowed}, got {v!r}"
+            )
+        return v
+
+
 class MemoryConfig(BaseModel):
     backend: str = "sqlite"
     settings: dict = Field(default_factory=dict)
     recall: MemoryRecallConfig = Field(default_factory=MemoryRecallConfig)
     decay: MemoryDecayConfig = Field(default_factory=MemoryDecayConfig)
     initial_memories_file: str | None = None
+    v2: MemoryV2Config = Field(default_factory=MemoryV2Config)
+
+    @field_validator("backend")
+    @classmethod
+    def backend_known(cls, v: str) -> str:
+        if v not in ("sqlite", "lance"):
+            raise ValueError("memory.backend must be 'sqlite' or 'lance'")
+        return v
+
+    @model_validator(mode="after")
+    def backend_v2_invariant(self) -> MemoryConfig:
+        if self.backend == "sqlite" and self.v2.enabled:
+            raise ValueError("memory.v2.enabled must be false when memory.backend is sqlite")
+        if self.backend == "lance" and not self.v2.enabled:
+            raise ValueError("memory.v2.enabled must be true when memory.backend is lance")
+        return self
+
+
+class AgencyConfig(BaseModel):
+    """Уровень прав модели на операции с памятью по тегам (0–3)."""
+
+    level: int = Field(default=1, ge=0, le=3)
+    l2_importance_floor: float = Field(default=0.12, ge=0.0, le=1.0)
+    """Уровень 2: ``MEMORY_UPDATE`` с ``importance`` не опускает ниже этого значения. Уровни 1 и 3 — без пола."""
 
 
 class IntentConfig(BaseModel):
@@ -145,6 +214,12 @@ class GeneralConfig(BaseModel):
     external_input_max_chars: int = Field(8000, ge=1, le=500_000)
     external_input_clear_after_use: bool = True
     """После успешного ответа и вывода очистить файл (иначе тот же текст повторится на следующем тике)."""
+    consolidation_every_n_ticks: int | None = Field(default=None, ge=1)
+    """Раз в N **успешных** тиков вызывать ``memory_store.consolidate()`` (для Lance — слияние дублей по тексту; SQLite — no-op). ``null`` — выкл."""
+    self_reflection_every_n_ticks: int | None = Field(default=None, ge=1)
+    """После каждых N успешных тиков **следующий** тик — режим ``self_reflection`` (см. ``intent.user_prompts.self_reflection``). ``null`` — выкл."""
+    self_reflection_recall_n: int = Field(default=5, ge=1, le=32)
+    """Сколько воспоминаний подмешать в промпт плановой рефлексии."""
 
 
 class IskraConfig(BaseModel):
@@ -152,6 +227,7 @@ class IskraConfig(BaseModel):
     state: StateConfig
     trigger: TriggerConfig
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    agency: AgencyConfig = Field(default_factory=AgencyConfig)
     intent: IntentConfig
     llm: LLMConfig = Field(default_factory=LLMConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
@@ -203,6 +279,11 @@ def validate_cross_config(cfg: IskraConfig) -> None:
     if cfg.trigger.random_topic_pool is not None and len(cfg.trigger.random_topic_pool) == 0:
         if "new_topic" in cfg.trigger.types:
             raise ValueError("random_topic_pool must be non-empty when new_topic trigger is used")
+    if cfg.general.self_reflection_every_n_ticks is not None:
+        if "self_reflection" not in cfg.intent.user_prompts:
+            raise ValueError(
+                "general.self_reflection_every_n_ticks requires intent.user_prompts.self_reflection"
+            )
 
 
 def load_config(path: str | Path) -> IskraConfig:

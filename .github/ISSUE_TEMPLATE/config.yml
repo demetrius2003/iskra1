@@ -1,0 +1,3 @@
+# После публикации на GitHub можно добавить contact_links с абсолютными URL
+# на каталог docs/ и VERSIONING.md — см. docs/GITHUB_DISCOVERY.md
+blank_issues_enabled: true

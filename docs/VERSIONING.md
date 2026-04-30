@@ -54,11 +54,35 @@
 
 **1.1.0**
 
-- [PUBLIC_API.md](PUBLIC_API.md), [CHANGELOG.md](CHANGELOG.md), [TODO_LIBRARY_AND_ISKRA2.md](TODO_LIBRARY_AND_ISKRA2.md) (реализация библиотечного API v0.3.0); уточнения в [CONFIG_SCHEMA.md](CONFIG_SCHEMA.md) (загрузка конфигурации, `load_config`).
+- [PUBLIC_API.md](PUBLIC_API.md), [CHANGELOG.md](CHANGELOG.md) (реализация библиотечного API v0.3.0); уточнения в [CONFIG_SCHEMA.md](CONFIG_SCHEMA.md) (загрузка конфигурации, `load_config`). *(Устаревшие заметки про отдельный downstream-репозиторий сведены в раздел «Внешний репозиторий» в PUBLIC_API.)*
 
 **1.2 (редакция CONFIG_SCHEMA 1.3 и связанные тексты)**
 
 - [CONFIG_SCHEMA.md](CONFIG_SCHEMA.md) § `general`: `external_input_file`, `external_input_max_chars`, `external_input_clear_after_use`, `preflight`; [INTENT_GENERATOR.md](INTENT_GENERATOR.md) (переменная Jinja `external_input`); [ARCHITECTURE.md](ARCHITECTURE.md) §8; [EVENT_LIFECYCLE.md](EVENT_LIFECYCLE.md); [README.md](../README.md); [PUBLIC_API.md](PUBLIC_API.md) (сводка по конфигу).
+
+**1.2.1 (PUBLIC_API 1.1)**
+
+- [PUBLIC_API.md](PUBLIC_API.md): явная пометка актуальности относительно `__all__`, список имён, ссылка на `tests/test_public_api.py`.
+
+**1.3.0**
+
+- [MEMORY_AND_AGENCY.md](MEMORY_AND_AGENCY.md), [TODO_MEMORY_AGENCY.md](TODO_MEMORY_AGENCY.md); обновления [ROADMAP.md](ROADMAP.md), [README.md](../README.md); пометки «архив» в `research/`; бренд Iskra-1 + линия SemVer 0.4+.
+
+**1.3.1**
+
+- Удалены вводящие в заблуждение вспомогательные документы в `docs/` про отдельный downstream-репозиторий; правила для внешних репо — раздел «Внешний репозиторий поверх `iskra`» в [PUBLIC_API.md](PUBLIC_API.md) (v1.2).
+
+**1.5.1**
+
+- [CONFIG_SCHEMA.md](CONFIG_SCHEMA.md) v1.5.1: `memory.v2.graph_link_increment`, `graph_max_edge_weight`; взвешенный граф в коде; [MEMORY_AND_AGENCY.md](MEMORY_AND_AGENCY.md); `networkx` в optional-dependencies `dev` ([pyproject.toml](../pyproject.toml)).
+
+**1.5.0**
+
+- [CONFIG_SCHEMA.md](CONFIG_SCHEMA.md) v1.5: `general.self_reflection_every_n_ticks`, `self_reflection_recall_n`, ключ `intent.user_prompts.self_reflection`; [FORMAL_SPECIFICATION.md](FORMAL_SPECIFICATION.md) INV-CONFIG; [INTENT_GENERATOR.md](INTENT_GENERATOR.md); workflow CI `tests` без `iskra[memory]`.
+
+**1.4.0**
+
+- [CONFIG_SCHEMA.md](CONFIG_SCHEMA.md) v1.4: утверждённый дизайн расширенной памяти (`memory.v2`, `backend: lance`), `agency.level`, протокол тегов памяти, команда миграции; [MEMORY_AND_AGENCY.md](MEMORY_AND_AGENCY.md), [TODO_MEMORY_AGENCY.md](TODO_MEMORY_AGENCY.md) (Фаза 0 закрыта); optional-dependencies `iskra[memory]` в [pyproject.toml](../pyproject.toml).
 
 **1.0.1**
 

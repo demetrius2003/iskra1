@@ -57,6 +57,10 @@ state:
     trigger_was_meta:
       condition: "trigger_type_eq_meta_reflection"
       restlessness: -0.05
+    trigger_was_self_reflection:
+      condition: "trigger_type_eq_self_reflection"
+      curiosity: 0.04
+      restlessness: -0.04
 
 trigger:
   interval:
@@ -104,8 +108,12 @@ trigger:
     - "лингвистика жестовых языков"
 
 memory:
-  backend: "sqlite"
+  # LanceDB + эмбеддинги: pip install iskra[memory]. Перенос со старого SQLite:
+  #   py -m iskra migrate --config config.yaml
+  # (или --dummy-embeddings, если PyTorch не грузится на Windows).
+  backend: "lance"
   settings:
+    # Путь к бывшей SQLite (migrate читает отсюда; сам файл не удаляется).
     db_path: "data/memory.db"
 
   recall:
@@ -121,6 +129,23 @@ memory:
     recall_protection: 1.5
 
   initial_memories_file: null
+
+  v2:
+    enabled: true
+    db_path: "data/memory_v2"
+    # sentence_transformers + PyTorch — семантический recall (после смены бэкенда нужна чистая БД или пересчёт векторов).
+    embeddings_backend: sentence_transformers
+    embeddings_model: "sentence-transformers/all-MiniLM-L6-v2"
+    hash_embedding_dim: 384
+    graph_enabled: true
+    graph_edges_path: null
+    recall_graph_extra: 2
+    graph_link_increment: 1.0
+    graph_max_edge_weight: 1000.0
+
+agency:
+  level: 3
+  l2_importance_floor: 0.12
 
 intent:
   system_prompt_template: |
@@ -144,6 +169,7 @@ intent:
     recall_memory: "Ты вдруг вспомнил: \"{{ context }}\"{% if external_input %}\n\n(Снаружи: {{ external_input }}){% endif %}"
     continue_context: "Ты продолжаешь думать о: {{ context }}{% if external_input %}\n\n(Снаружи: {{ external_input }}){% endif %}"
     meta_reflection: "Ты задумался о том, как устроено твоё собственное мышление.{% if external_input %}\n\n(Сообщение снаружи, если хочешь — вплети: {{ external_input }}){% endif %}"
+    self_reflection: "Плановая пауза: оглянись на недавние воспоминания.{% if memories %}\n{% for m in memories %}- {{ m }}\n{% endfor %}{% endif %}{% if external_input %}\n\n(Снаружи: {{ external_input }}){% endif %}"
     default: "У тебя возникла мысль: {{ context }}{% if external_input %}\n\n(Снаружи: {{ external_input }}){% endif %}"
 
   max_response_tokens: 500
@@ -213,11 +239,14 @@ general:
   # Предстарт: память, пути, доступность LLM (для mock — только явное «без сети»)
   preflight: true
   # Внешний UTF-8 в файл: перед тиком — в промпты (external_input) + импульс user_message
-  external_input_file: null
+  external_input_file: "data/incoming.txt"
   external_input_max_chars: 8000
   external_input_clear_after_use: true
   decay_every_n_ticks: 10
+  consolidation_every_n_ticks: 200
+  # После каждых N успешных тиков следующий тик — self_reflection (нужен intent.user_prompts.self_reflection).
+  self_reflection_every_n_ticks: 25
+  self_reflection_recall_n: 5
   tick_jitter: 0.1
   data_dir: "data"
   pid_file: "data/iskra.pid"
-  external_input_file: "data/incoming.txt"

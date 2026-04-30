@@ -10,11 +10,13 @@ import time
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
 import yaml
 
 from iskra.core.config import IskraConfig
 from iskra.core.intent_generator import Jinja2IntentGenerator
+from iskra.core.memory_tags import apply_memory_tags, parse_memory_tags, strip_tag_lines
 from iskra.core.state_engine import OUStateEngine
 from iskra.core.trigger_engine import DefaultTriggerEngine
 from iskra.event_log import EventLog
@@ -44,7 +46,7 @@ def _compute_importance(trigger_type: str, content: str) -> float:
         base += 0.1
     if "?" in content:
         base += 0.1
-    if trigger_type == "meta_reflection":
+    if trigger_type in ("meta_reflection", "self_reflection"):
         base += 0.15
     return min(1.0, base)
 
@@ -58,6 +60,7 @@ class MainLoop:
         self.cooldown_until: float = 0.0
         self._thought_count = 0
         self._successful_ticks = 0
+        self._pending_self_reflection = False
 
         Path(config.general.data_dir).mkdir(parents=True, exist_ok=True)
 
@@ -127,6 +130,22 @@ class MainLoop:
             path.write_text("", encoding="utf-8")
         except OSError as e:
             logger.warning("external input: не очистить %s: %s", path, e)
+
+    def _make_self_reflection_event(self, state_before: dict[str, float]) -> SparkEvent:
+        n = self.config.general.self_reflection_recall_n
+        try:
+            mem_ctx = self.memory_store.recall(category=None, n=n, context=None)
+        except Exception as e:
+            logger.warning("self_reflection recall failed: %s", e)
+            mem_ctx = []
+        return SparkEvent(
+            id=str(uuid4()),
+            trigger_type="self_reflection",
+            state_snapshot=dict(state_before),
+            memory_context=mem_ctx,
+            timestamp=datetime.now(UTC),
+            metadata={},
+        )
 
     def _load_seed_memories(self) -> None:
         path = self.config.memory.initial_memories_file
@@ -199,7 +218,11 @@ class MainLoop:
 
         event: SparkEvent | None = None
         try:
-            event = self.trigger_engine.evaluate(state_before)
+            if self._pending_self_reflection:
+                self._pending_self_reflection = False
+                event = self._make_self_reflection_event(state_before)
+            else:
+                event = self.trigger_engine.evaluate(state_before)
             if event is None:
                 self.last_tick_time = time.monotonic()
                 return
@@ -225,6 +248,19 @@ class MainLoop:
 
             response = replace(response, event_id=event.id)
 
+            tag_ops = parse_memory_tags(response.content)
+            if tag_ops:
+                apply_memory_tags(
+                    self.memory_store,
+                    tag_ops,
+                    self.config.agency,
+                    default_category=event.trigger_type,
+                )
+            display_content = strip_tag_lines(response.content).strip()
+            if not display_content:
+                display_content = "…"
+            response = replace(response, content=display_content)
+
             try:
                 await self.output_channel.emit(
                     event.id,
@@ -247,6 +283,12 @@ class MainLoop:
             self._successful_ticks += 1
             if self._successful_ticks % self.config.general.decay_every_n_ticks == 0:
                 self.memory_store.decay()
+            c_every = self.config.general.consolidation_every_n_ticks
+            if c_every and self._successful_ticks % c_every == 0:
+                self.memory_store.consolidate()
+            sr_every = self.config.general.self_reflection_every_n_ticks
+            if sr_every and self._successful_ticks % sr_every == 0:
+                self._pending_self_reflection = True
 
             mem_recalled_ids = [m.id for m in event.memory_context if m.id]
             ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")

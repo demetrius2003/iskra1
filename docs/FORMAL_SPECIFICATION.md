@@ -673,8 +673,8 @@ for attempt in range(config.llm.retry.max_attempts):
 
 | Модель                | Поле                | Ограничение                          |
 |-----------------------|---------------------|--------------------------------------|
-| `StateVariableConfig` | `initial`           | `>= 0.0, <= 1.0`                    |
-| `StateVariableConfig` | `mu`                | `>= 0.0, <= 1.0`                    |
+| `StateVariableConfig` | `clamp_min`, `clamp_max` | границы OU (по умолчанию 0…1; можно −1…1 для valence) |
+| `StateVariableConfig` | `initial`, `mu`     | внутри `[clamp_min, clamp_max]`     |
 | `StateVariableConfig` | `theta`             | `> 0.0`                             |
 | `StateVariableConfig` | `sigma`             | `> 0.0`                             |
 | `StateConfig`         | `variables`         | `len >= 1`                           |
@@ -998,8 +998,12 @@ def record_error(self, event_id: str, error_msg: str):
 def create_memory_store(config: MemoryConfig) -> MemoryStore:
     if config.backend == "sqlite":
         return SQLiteMemoryStore(config)
+    if config.backend == "lance":
+        return LanceMemoryStore(config)
     raise ValueError(f"Unknown memory backend: {config.backend}")
 ```
+
+Ответ LLM может содержать утверждённые теги памяти (`[MEMORY_REQUEST]`, `[MEMORY_UPDATE]`, `[MEMORY_SAVE]`). Грамматика полей и примеры — в [CONFIG_SCHEMA.md](CONFIG_SCHEMA.md), подраздел «Протокол тегов в тексте ответа модели». Парсер и политика `agency.level` — в реализации 0.4+.
 
 ### 13.2. create_llm_adapter
 
@@ -1055,11 +1059,11 @@ def create_trigger_types(config: TriggerConfig) -> list[TriggerType]:
 
 Свойства, которые должны выполняться ВСЕГДА после инициализации:
 
-1. **INV-STATE:** Все переменные состояния ∈ [0.0, 1.0].
+1. **INV-STATE:** Каждая переменная состояния ∈ `[clamp_min, clamp_max]` своей конфигурации (по умолчанию [0.0, 1.0]).
 2. **INV-MEMORY:** Все importance ∈ [min_importance, 1.0].
 3. **INV-MEMORY-2:** recall_count >= 0 для всех записей.
 4. **INV-LOOP:** MainLoop не завершается аварийно после успешного `__init__`.
-5. **INV-CONFIG:** После загрузки конфигурации все кросс-ссылки (modulated_by → variables, trigger_type → prompts) корректны.
+5. **INV-CONFIG:** После загрузки конфигурации все кросс-ссылки (modulated_by → variables, trigger_type → prompts) корректны; если задано `general.self_reflection_every_n_ticks`, в `intent.user_prompts` присутствует ключ `self_reflection`.
 6. **INV-LOG:** Каждый тик с event != None порождает ровно одну запись в EventLog (полную или с ошибками).
 7. **INV-PID:** Не более одного экземпляра Iskra-1 на один pid_file.
 8. **INV-INTERVAL:** Интервал между тиками ∈ [min_seconds * (1 - jitter), max_seconds * (1 + jitter)].
