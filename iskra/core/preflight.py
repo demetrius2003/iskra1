@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shutil
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -57,6 +59,18 @@ async def preflight(main: MainLoop) -> None:
     out.append(
         "конфиг: кросс-валидация OK (триггеры↔state, agency, self_reflection↔промпты и т.д.)"
     )
+
+    em_counts = main._emotion.lexicon_counts()
+    out.append(
+        f"эмоции: лексикон pos={em_counts['positive_words']} "
+        f"neg={em_counts['negative_words']} "
+        f"high_arousal={em_counts['high_arousal_words']} "
+        f"distinct_tokens={em_counts['distinct_tokens']}"
+    )
+
+    if "new_topic" in cfg.trigger.types:
+        npool = len(cfg.trigger.random_topic_pool)
+        out.append(f"триггер new_topic: пул тем после загрузки — {npool} строк")
 
     # --- Память (СУБД / бэкенд) ---
     try:
@@ -154,6 +168,27 @@ async def preflight(main: MainLoop) -> None:
         else:
             out.append("Lance: граф выключен (memory.v2.graph_enabled=false)")
 
+    ws = cfg.tools.web_search
+    if ws.enabled:
+        try:
+            import duckduckgo_search  # noqa: F401
+        except ImportError as e:
+            exe = sys.executable
+            raise PreflightError(
+                "tools.web_search.enabled=true, но в этом интерпретаторе Python недоступен модуль "
+                "duckduckgo_search (пакет pip: duckduckgo-search). "
+                f"Интерпретатор сейчас: {exe}. "
+                f'Установите в тот же Python: "{exe}" -m pip install duckduckgo-search '
+                "(часто `pip install` попадает в другую версию, чем `py -m iskra`). "
+                'Либо явно: py -3.12 -m iskra после установки в 3.12.'
+            ) from e
+        out.append(
+            f"web_search: включён (max_results={ws.max_results}, max_per_tick={ws.max_per_tick}, "
+            f"max_per_hour={ws.max_per_hour})"
+        )
+    else:
+        out.append("web_search: выключен (tools.web_search.enabled=false)")
+
     # --- Внешний ввод (файл) ---
     ex = cfg.general.external_input_file
     if ex:
@@ -171,7 +206,8 @@ async def preflight(main: MainLoop) -> None:
     lv = cfg.agency.level
     floor = cfg.agency.l2_importance_floor
     out.append(
-        f"agency: уровень L{lv} (теги [MEMORY_REQUEST]/UPDATE/SAVE/DELETE); "
+        f"agency: уровень L{lv} "
+        "(L0—только MEMORY_REQUEST; L1—SAVE/UPDATE только лог «предложение», без записи в store; L2+—мутации; DELETE только L3); "
         f"l2_importance_floor={floor}"
     )
     sr = cfg.general.self_reflection_every_n_ticks
@@ -203,9 +239,18 @@ async def preflight(main: MainLoop) -> None:
             _touch_write(elp)
         except OSError as e:
             raise PreflightError(f"journal events: {e}") from e
-        out.append(f"journal: OK ({elp})")
+        sz = elp.stat().st_size if elp.is_file() else 0
+        out.append(
+            f"journal: OK ({elp}); текущий размер {sz} байт; ротация при >{cfg.logging.event_log.rotate_mb} MiB"
+        )
     else:
         out.append("journal: отключён")
+
+    dd = Path(cfg.general.data_dir).resolve()
+    dd.mkdir(parents=True, exist_ok=True)
+    du = shutil.disk_usage(dd)
+    free_gib = du.free / (1024**3)
+    out.append(f"диск: свободно ~{free_gib:.2f} GiB (том каталога data_dir={dd})")
 
     # --- Output: файл ---
     if cfg.output.channel == "file":

@@ -19,5 +19,7 @@ class ContinueContextTrigger:
         mod = state.get(self._cfg.modulated_by, 0.0)
         return self._cfg.base_weight * (1.0 + self._cfg.modulation_strength * mod)
 
-    def generate_context(self, memory: MemoryStore) -> list[MemoryRecord]:
-        return memory.recall(category="last_context", n=1, context=None)
+    def generate_context(
+        self, memory: MemoryStore, *, state: StateSnapshot | None = None
+    ) -> list[MemoryRecord]:
+        return memory.recall(category="last_context", n=1, context=None, state=state)

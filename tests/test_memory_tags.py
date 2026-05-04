@@ -8,6 +8,7 @@ from iskra.core.memory_tags import (
     MemoryUpdateTag,
     apply_memory_tags,
     parse_memory_tags,
+    parse_web_search_queries,
     strip_tag_lines,
 )
 from iskra.memory.sqlite_store import SQLiteMemoryStore
@@ -84,6 +85,29 @@ def test_strip_tag_lines() -> None:
     assert strip_tag_lines(raw).strip() == "a\nb"
 
 
+def test_strip_web_search_lines() -> None:
+    raw = "a\n[WEB_SEARCH] x\nb"
+    assert strip_tag_lines(raw).strip() == "a\nb"
+
+
+def test_parse_web_search_queries_plain_and_fields() -> None:
+    text = """intro
+[WEB_SEARCH] парадоксы Кантора
+[WEB_SEARCH] query: "неполнота"
+tail"""
+    assert parse_web_search_queries(text) == ["парадоксы Кантора", "неполнота"]
+
+
+def test_parse_web_search_queries_russian_key() -> None:
+    assert parse_web_search_queries('[WEB_SEARCH] запрос: "Гёдель"') == ["Гёдель"]
+
+
+def test_parse_web_search_queries_issledovanie_key() -> None:
+    assert parse_web_search_queries(
+        '[WEB_SEARCH] исследование: "современные открытия майя"'
+    ) == ["современные открытия майя"]
+
+
 def test_apply_tags_agency_l0(tmp_path) -> None:
     store = _sqlite_mem(tmp_path, "m.db")
     store.store("t", "base", 0.5)
@@ -96,6 +120,13 @@ def test_apply_tags_agency_l1_save(tmp_path) -> None:
     store = _sqlite_mem(tmp_path, "m2.db")
     ops = parse_memory_tags('[MEMORY_SAVE] content: "new", importance: 0.8')
     apply_memory_tags(store, ops, AgencyConfig(level=1), default_category="tagged")
+    assert store.count() == 0
+
+
+def test_apply_tags_agency_l2_save(tmp_path) -> None:
+    store = _sqlite_mem(tmp_path, "m3.db")
+    ops = parse_memory_tags('[MEMORY_SAVE] content: "new", importance: 0.8')
+    apply_memory_tags(store, ops, AgencyConfig(level=2), default_category="tagged")
     assert store.count() == 1
     rec = store.recall(category="tagged", n=1)
     assert rec[0].content == "new"

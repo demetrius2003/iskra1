@@ -85,6 +85,8 @@ class TriggerConfig(BaseModel):
     interval: TriggerIntervalConfig
     types: dict[str, TriggerTypeConfig]
     random_topic_pool: list[str] = Field(default_factory=list)
+    random_topic_pool_file: str | None = None
+    """Путь к YAML с темами; после загрузки конфига строки из файла **добавляются** после ``random_topic_pool``."""
 
 
 class MemoryRecallConfig(BaseModel):
@@ -92,6 +94,9 @@ class MemoryRecallConfig(BaseModel):
     importance_weight: float = Field(ge=0.0, le=1.0, default=0.7)
     recency_weight: float = Field(ge=0.0, le=1.0, default=0.3)
     selection: str = "stochastic"
+    emotion_enabled: bool = True
+    emotion_valence_alignment_weight: float = Field(default=0.15, ge=0.0, le=1.0)
+    emotion_nostalgia_positive_weight: float = Field(default=0.10, ge=0.0, le=1.0)
 
 
 class MemoryDecayConfig(BaseModel):
@@ -171,6 +176,32 @@ class IntentConfig(BaseModel):
     max_response_tokens: int = 500
 
 
+class WebSearchToolConfig(BaseModel):
+    """DuckDuckGo-текст + сводка через LLM; зависимость: ``pip install duckduckgo-search`` или ``pip install ".[web]"`` из корня этого проекта."""
+
+    enabled: bool = False
+    max_results: int = Field(default=5, ge=1, le=25)
+    summary_max_tokens: int = Field(default=300, ge=32, le=8000)
+    max_per_tick: int = Field(default=1, ge=0, le=50)
+    max_per_hour: int = Field(default=5, ge=0, le=500)
+    memory_importance: float = Field(default=0.8, ge=0.0, le=1.0)
+    memory_category: str = "web_research"
+    log_snippet_count: bool = True
+    """В лог INFO: сколько текстовых сниппетов вернул поиск до сводки LLM."""
+    log_snippet_previews: bool = True
+    """В лог INFO: превью сниппетов (сырой текст из поиска до сводки LLM)."""
+    log_snippet_preview_limit: int = Field(default=5, ge=1, le=25)
+    """Не более стольких сниппетов выводить превью (остальные только в счётчике)."""
+    log_snippet_preview_chars: int = Field(default=280, ge=16, le=4000)
+    """Обрезка одной строки превью сниппета для лога."""
+    log_summary_preview_chars: int | None = Field(default=320, ge=32, le=4000)
+    """Начало сводки LLM в лог INFO; задайте ``null``, чтобы отключить превью сводки."""
+
+
+class ToolsConfig(BaseModel):
+    web_search: WebSearchToolConfig = Field(default_factory=WebSearchToolConfig)
+
+
 class LLMRetryConfig(BaseModel):
     max_attempts: int = Field(ge=1, default=3)
     backoff_base_seconds: float = Field(ge=0.1, default=1.0)
@@ -199,7 +230,36 @@ class EventLogConfig(BaseModel):
 class LoggingConfig(BaseModel):
     level: str = "INFO"
     format: str = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    highlight_primp_logs: bool = True
+    """В консоли (TTY) строки логгера ``primp`` (HTTP-запросы поиска) подсвечивать голубым."""
     event_log: EventLogConfig = Field(default_factory=EventLogConfig)
+
+
+class SelfReflectionInsightConfig(BaseModel):
+    """Углублённая саморефлексия — сохранение сформулированного наблюдения в память."""
+
+    enabled: bool = False
+    importance: float = Field(default=0.85, ge=0.0, le=1.0)
+    category: str = "self_insight"
+
+
+class EmotionClassifierConfig(BaseModel):
+    lexicon_file: str | None = Field(default="emotion_lexicon.yaml")
+    lexicon_custom_file: str | None = None
+    """Дополнительный YAML с теми же ключами, что основной лексикон; объединяется с ``lexicon_file`` (объединение множеств)."""
+    max_input_chars: int | None = Field(default=None)
+    """Если задано — классификатор режет текст до N символов (минимум 64 при не-null)."""
+    valence_blend: float = Field(default=0.12, ge=0.0, le=1.0)
+    arousal_blend: float = Field(default=0.14, ge=0.0, le=1.0)
+
+    @field_validator("max_input_chars")
+    @classmethod
+    def max_input_chars_bounds(cls, v: int | None) -> int | None:
+        if v is None:
+            return v
+        if not (64 <= v <= 500_000):
+            raise ValueError("emotion_classifier.max_input_chars must be null or between 64 and 500000")
+        return v
 
 
 class GeneralConfig(BaseModel):
@@ -220,6 +280,9 @@ class GeneralConfig(BaseModel):
     """После каждых N успешных тиков **следующий** тик — режим ``self_reflection`` (см. ``intent.user_prompts.self_reflection``). ``null`` — выкл."""
     self_reflection_recall_n: int = Field(default=5, ge=1, le=32)
     """Сколько воспоминаний подмешать в промпт плановой рефлексии."""
+    self_reflection_insight: SelfReflectionInsightConfig = Field(
+        default_factory=SelfReflectionInsightConfig
+    )
 
 
 class IskraConfig(BaseModel):
@@ -230,9 +293,11 @@ class IskraConfig(BaseModel):
     agency: AgencyConfig = Field(default_factory=AgencyConfig)
     intent: IntentConfig
     llm: LLMConfig = Field(default_factory=LLMConfig)
+    tools: ToolsConfig = Field(default_factory=ToolsConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     general: GeneralConfig = Field(default_factory=GeneralConfig)
+    emotion_classifier: EmotionClassifierConfig = Field(default_factory=EmotionClassifierConfig)
 
 
 def _substitute_env_in_str(raw: str) -> str:
@@ -257,9 +322,80 @@ def _deep_substitute_env(obj: object) -> object:
     return obj
 
 
+def _resolve_config_relative_path(config_file: Path, user_path: str) -> Path:
+    """Относительный путь: сначала от текущего каталога, иначе от каталога с ``config_file``."""
+    p = Path(user_path)
+    if p.is_absolute():
+        return p.resolve()
+    cwd_candidate = (Path.cwd() / p).resolve()
+    if cwd_candidate.is_file():
+        return cwd_candidate
+    return (config_file.parent / p).resolve()
+
+
+def _parse_topics_yaml_document(doc: Any, *, source: Path) -> list[str]:
+    if doc is None:
+        raise ValueError(f"random_topic_pool_file is empty YAML: {source}")
+    raw_items: list[Any]
+    if isinstance(doc, list):
+        raw_items = doc
+    elif isinstance(doc, dict):
+        topics = doc.get("topics")
+        if topics is None:
+            raise ValueError(
+                f"random_topic_pool_file must contain a root list or a mapping "
+                f"with key 'topics': {source}"
+            )
+        if not isinstance(topics, list):
+            raise ValueError(f"'topics' must be a list in {source}")
+        raw_items = topics
+    else:
+        raise ValueError(
+            f"random_topic_pool_file root must be list or mapping, got {type(doc).__name__}: {source}"
+        )
+    out: list[str] = []
+    for i, item in enumerate(raw_items):
+        if not isinstance(item, str):
+            raise ValueError(
+                f"random_topic_pool_file entry #{i} must be string, got {type(item).__name__}: {source}"
+            )
+        s = item.strip()
+        if s:
+            out.append(s)
+    return out
+
+
+def _load_topics_yaml_file(path: Path) -> list[str]:
+    if not path.is_file():
+        raise ValueError(f"random_topic_pool_file not found: {path}")
+    raw = path.read_text(encoding="utf-8")
+    try:
+        doc = yaml.safe_load(raw)
+    except yaml.YAMLError as e:
+        raise ValueError(f"random_topic_pool_file invalid YAML ({path}): {e}") from e
+    return _parse_topics_yaml_document(doc, source=path)
+
+
+def _merge_random_topic_pool_from_file(cfg: IskraConfig, config_file: Path) -> IskraConfig:
+    rel = cfg.trigger.random_topic_pool_file
+    if rel is None or not str(rel).strip():
+        return cfg
+    path = _resolve_config_relative_path(config_file, str(rel).strip())
+    file_topics = _load_topics_yaml_file(path)
+    merged = list(cfg.trigger.random_topic_pool) + file_topics
+    new_trigger = cfg.trigger.model_copy(update={"random_topic_pool": merged})
+    return cfg.model_copy(update={"trigger": new_trigger})
+
+
 def validate_cross_config(cfg: IskraConfig) -> None:
     """Cross-field checks from FORMAL_SPEC §7.3."""
     var_names = set(cfg.state.variables.keys())
+    for impulse_name, deltas in cfg.state.impulses.items():
+        for vn in deltas:
+            if vn not in var_names:
+                raise ValueError(
+                    f"state.impulses.{impulse_name} references unknown variable '{vn}'"
+                )
     mod = cfg.trigger.interval.modulated_by
     if mod is not None and mod not in var_names:
         raise ValueError(f"trigger.interval.modulated_by '{mod}' not in state.variables")
@@ -276,6 +412,12 @@ def validate_cross_config(cfg: IskraConfig) -> None:
                 )
     if "default" not in cfg.intent.user_prompts:
         raise ValueError('intent.user_prompts must contain key "default"')
+    if cfg.memory.recall.emotion_enabled:
+        for name in ("valence", "arousal"):
+            if name not in var_names:
+                raise ValueError(
+                    f"memory.recall.emotion_enabled requires state.variables.{name}"
+                )
     if cfg.trigger.random_topic_pool is not None and len(cfg.trigger.random_topic_pool) == 0:
         if "new_topic" in cfg.trigger.types:
             raise ValueError("random_topic_pool must be non-empty when new_topic trigger is used")
@@ -303,5 +445,6 @@ def load_config(path: str | Path) -> IskraConfig:
         raise ValueError("Configuration YAML is empty or null")
     data = cast(Any, _deep_substitute_env(data))
     cfg = IskraConfig.model_validate(data)
+    cfg = _merge_random_topic_pool_from_file(cfg, p)
     validate_cross_config(cfg)
     return cfg

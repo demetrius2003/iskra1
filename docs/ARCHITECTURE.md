@@ -75,7 +75,7 @@ Iskra-1 копирует именно эту минимальную схему, 
 Минимальная логика (v0.01):
 - Интервал: `base = max - (max - min) * restlessness`, с jitter ±10%.
 - Тип мысли выбирается стохастически: `w_i = base_weight * (1 + strength * state[var])`, нормализуется в вероятности.
-- 4 встроенных типа: `new_topic`, `recall_memory`, `continue_context`, `meta_reflection`.
+- Четыре типа в конфиге `trigger.types`: `new_topic`, `recall_memory`, `continue_context`, `meta_reflection`; отдельно ядро может порождать тик **`self_reflection`** при заданном `general.self_reflection_every_n_ticks` (не строка в реестре весов).
 
 Масштабирование: новые типы триггеров = новый файл + запись в конфиг. Подробно: [TRIGGER_ENGINE.md](TRIGGER_ENGINE.md).
 

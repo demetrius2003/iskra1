@@ -61,7 +61,8 @@ def make_embedder(model_name: str) -> Callable[[str], list[float]]:
             "`python -m iskra migrate --config config.yaml --dummy-embeddings`. "
             f"Исходная ошибка: {e}"
         ) from e
-    dim = model.get_sentence_embedding_dimension()
+    dim_fn = getattr(model, "get_embedding_dimension", None)
+    dim = int(dim_fn()) if callable(dim_fn) else int(model.get_sentence_embedding_dimension())
 
     def embed(text: str) -> list[float]:
         if not text.strip():

@@ -35,11 +35,16 @@ class Jinja2IntentGenerator:
             logger.warning("missing user_prompt for %s, using default", trigger)
 
         context_string = self._context_string(event)
+        memory_lines = [
+            f"{m.content} [эмоции записи: valence={m.emotional_valence:.2f}, arousal={m.arousal:.2f}]"
+            for m in event.memory_context
+        ]
         try:
             user_t = jinja2.Template(tmpl_str)
             user_prompt = user_t.render(
                 context=context_string,
                 memories=[m.content for m in event.memory_context],
+                memory_lines=memory_lines,
                 external_input=ext,
             )
         except jinja2.TemplateError as e:

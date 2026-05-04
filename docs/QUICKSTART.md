@@ -50,13 +50,51 @@ py -m iskra --config config.yaml
 py -m iskra --config C:\proj\Iskra1\my_profile.yaml
 ```
 
+Быстрая проверка промптов **без LLM и без записи в память / events.jsonl**:
+
+```bash
+py -m iskra --dry-run --config tests/minimal.yaml
+```
+
 В эталонном `config.yaml` по умолчанию:
 
 - **`llm.adapter: mock`** — **GigaChat и другие API не используются**; внешние ключи не нужны. В консоль идут шаблонные «мысли». Перед стартом в логе (уровень INFO) пишет **предстартовая проверка** (`general.preflight: true`): память, пути к `events.jsonl`, явно «LLM: mock — без сети».
+- **Пул тем для `new_topic`** можно вынести в отдельный файл (`trigger.random_topic_pool_file`, см. [`data/random_topic_pool.yaml`](../data/random_topic_pool.yaml) и [CONFIG_SCHEMA.md](CONFIG_SCHEMA.md)).
 - **Интервал между тиками** — примерно **3–15 минут** (`trigger.interval.min_seconds` / `max_seconds`). После проверок в логе будет строка вида: «Первый тик через N секунд».
 - Обойти предстарт (не рекомендуется): `general.preflight: false` в `config.yaml`.
 
 Остановка: **Ctrl+C** (корректное завершение, pid-файл удаляется).
+
+---
+
+## 3b. Дашборд, резюме за сутки, webhook
+
+Все команды читают **`--config`** (пути к `events.jsonl` и `data/` берутся из конфига, если не переопределены).
+
+**Статический HTML** (диаграммы через [Chart.js](https://www.chartjs.org/) по CDN) за последние **24 часа** по умолчанию:
+
+```bash
+py -m iskra dashboard --config config.yaml
+# результат: data/dashboard.html (или <general.data_dir>/dashboard.html)
+```
+
+Опции: `--hours 48`, `-o path/to/out.html`, `--events path/to/events.jsonl`.
+
+**Текстовое резюме** в `data/daily_summary.txt` (то же временное окно):
+
+```bash
+py -m iskra summary --config config.yaml --hours 24
+```
+
+Удобно вызывать по **cron** / планировщику раз в день.
+
+**Webhook (только localhost по умолчанию):** POST с телом `{"text":"..."}` или `text/plain` → запись UTF-8 в файл внешнего ввода (как Telegram-прокси к следующему тику):
+
+```bash
+py -m iskra webhook --config config.yaml --port 8765
+```
+
+Нужен **`general.external_input_file`** в конфиге или флаг **`--target путь.txt`**. Не выставляйте порт в интернет без TLS и авторизации.
 
 ---
 

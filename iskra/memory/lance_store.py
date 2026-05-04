@@ -15,6 +15,7 @@ import pyarrow.compute as pc
 
 from iskra.core.config import MemoryConfig
 from iskra.memory.embeddings import embedding_dim, make_embedder, make_hash_embedder
+from iskra.memory.recall_scoring import recall_emotion_bonus_from_vals
 from iskra.models import MemoryRecord
 
 logger = logging.getLogger("iskra.memory.lance")
@@ -51,6 +52,15 @@ def _lance_table_names(db: object) -> list[str]:
 
 
 def _record_from_table(at: pa.Table, idx: int) -> MemoryRecord:
+    names = set(at.column_names)
+
+    def col_float(col_name: str, default: float) -> float:
+        if col_name not in names:
+            return default
+        return float(at.column(col_name)[idx].as_py())
+
+    ev = col_float("emotional_valence", 0.0)
+    ar = col_float("arousal", 0.5)
     return MemoryRecord(
         id=at.column("id")[idx].as_py(),
         timestamp=datetime.fromisoformat(at.column("timestamp")[idx].as_py()),
@@ -60,6 +70,8 @@ def _record_from_table(at: pa.Table, idx: int) -> MemoryRecord:
         last_recall=datetime.fromisoformat(at.column("last_recall")[idx].as_py()),
         recall_count=int(at.column("recall_count")[idx].as_py()),
         decay_rate=float(at.column("decay_rate")[idx].as_py()),
+        emotional_valence=ev,
+        arousal=ar,
     )
 
 
@@ -131,6 +143,7 @@ class LanceMemoryStore:
         with self._lock:
             if self._TABLE in _lance_table_names(self._db):
                 self._table = self._db.open_table(self._TABLE)
+                self._migrate_emotion_columns_if_needed()
                 return
             vec = [0.0] * self._dim
             now = datetime.now(UTC).isoformat()
@@ -143,6 +156,8 @@ class LanceMemoryStore:
                 "last_recall": now,
                 "recall_count": 0,
                 "decay_rate": self._config.decay.base_rate,
+                "emotional_valence": 0.0,
+                "arousal": 0.5,
                 "vector": vec,
             }
             try:
@@ -155,6 +170,38 @@ class LanceMemoryStore:
             t.delete("id = '__iskra_bootstrap__'")
             self._table = t
 
+    def _migrate_emotion_columns_if_needed(self) -> None:
+        """Таблицы до появления эмоций в схеме — без колонок; Lance не делает это сам."""
+        try:
+            schema = self._table.schema
+        except Exception as e:
+            logger.warning("lance migrate: не прочитать schema: %s", e)
+            return
+        names = {f.name for f in schema}
+        transforms: dict[str, str] = {}
+        if "emotional_valence" not in names:
+            transforms["emotional_valence"] = "0.0"
+        if "arousal" not in names:
+            transforms["arousal"] = "0.5"
+        if not transforms:
+            return
+        add_fn = getattr(self._table, "add_columns", None)
+        if add_fn is None:
+            logger.warning(
+                "lance migrate: у таблицы нет колонок %s; обновите lancedb или пересоздайте каталог memory.v2.db_path",
+                ", ".join(transforms.keys()),
+            )
+            return
+        try:
+            add_fn(transforms)
+            logger.info(
+                "lance migrate: добавлены колонки %s к таблице %s",
+                ", ".join(transforms.keys()),
+                self._TABLE,
+            )
+        except Exception as e:
+            logger.warning("lance migrate add_columns failed: %s", e)
+
     def _row_dict(
         self,
         mid: str,
@@ -164,6 +211,9 @@ class LanceMemoryStore:
         imp: float,
         base_rate: float,
         vector: list[float],
+        *,
+        emotional_valence: float = 0.0,
+        arousal: float = 0.5,
     ) -> dict:
         return {
             "id": mid,
@@ -174,6 +224,8 @@ class LanceMemoryStore:
             "last_recall": now,
             "recall_count": 0,
             "decay_rate": base_rate,
+            "emotional_valence": emotional_valence,
+            "arousal": arousal,
             "vector": vector,
         }
 
@@ -235,20 +287,30 @@ class LanceMemoryStore:
             return
         self._graph.link(source_id, ok)
 
-    def store(self, category: str, content: str, importance: float) -> str:
+    def store(
+        self,
+        category: str,
+        content: str,
+        importance: float,
+        *,
+        emotional_valence: float = 0.0,
+        arousal: float = 0.5,
+    ) -> str:
         if not content.strip():
             logger.warning("store skipped: empty content")
             return ""
         mid = str(uuid4())
         now = datetime.now(UTC).isoformat()
         imp = max(0.0, min(1.0, importance))
+        ev = max(-1.0, min(1.0, float(emotional_valence)))
+        ar = max(0.0, min(1.0, float(arousal)))
         base_rate = self._config.decay.base_rate
         try:
             vec = self._embedder(content)
         except Exception as e:
             logger.warning("embedding failed: %s", e)
             return ""
-        row = self._row_dict(mid, now, category, content, imp, base_rate, vec)
+        row = self._row_dict(mid, now, category, content, imp, base_rate, vec, emotional_valence=ev, arousal=ar)
         try:
             with self._lock:
                 self._table.add([row])
@@ -258,7 +320,12 @@ class LanceMemoryStore:
         return mid
 
     def recall(
-        self, category: str | None = None, n: int = 3, context: str | None = None
+        self,
+        category: str | None = None,
+        n: int = 3,
+        context: str | None = None,
+        *,
+        state: dict[str, float] | None = None,
     ) -> list[MemoryRecord]:
         n = max(1, n)
         with self._lock:
@@ -314,7 +381,15 @@ class LanceMemoryStore:
                             recency = 1.0 / (1.0 + hours_since)
                             dist = float(dists[i]) if i < len(dists) else 0.0
                             sem = 1.0 / (1.0 + dist)
-                            score = imp * iw + recency * rw + sem * 0.15
+                            r_ev = _record_from_table(res, i).emotional_valence
+                            score = (
+                                imp * iw
+                                + recency * rw
+                                + sem * 0.15
+                                + recall_emotion_bonus_from_vals(
+                                    r_ev, state, self._config.recall
+                                )
+                            )
                             scored.append((score, i))
                         if selection == "top_n":
                             scored.sort(key=lambda x: -x[0])
@@ -338,7 +413,13 @@ class LanceMemoryStore:
             lr = row.last_recall
             hours_since = (now - lr).total_seconds() / 3600.0
             recency = 1.0 / (1.0 + hours_since)
-            score = row.importance * iw + recency * rw
+            score = (
+                row.importance * iw
+                + recency * rw
+                + recall_emotion_bonus_from_vals(
+                    row.emotional_valence, state, self._config.recall
+                )
+            )
             scored.append((score, i))
 
         if selection == "top_n":
@@ -364,32 +445,37 @@ class LanceMemoryStore:
                     if filt.num_rows == 0:
                         continue
                     row = filt.slice(0, 1)
-                    mid = row.column("id")[0].as_py()
+                    mr_src = _record_from_table(row, 0)
+                    mid = mr_src.id
                     self._table.delete(f"id = '{_sql_id_literal(str(mid))}'")
                     vec = row.column("vector")[0].as_py()
-                    rc = int(row.column("recall_count")[0].as_py()) + 1
+                    rc = mr_src.recall_count + 1
                     payload = {
                         "id": mid,
-                        "timestamp": row.column("timestamp")[0].as_py(),
-                        "category": row.column("category")[0].as_py(),
-                        "content": row.column("content")[0].as_py(),
-                        "importance": float(row.column("importance")[0].as_py()),
+                        "timestamp": mr_src.timestamp.isoformat(),
+                        "category": mr_src.category,
+                        "content": mr_src.content,
+                        "importance": mr_src.importance,
                         "last_recall": now_iso,
                         "recall_count": rc,
-                        "decay_rate": float(row.column("decay_rate")[0].as_py()),
+                        "decay_rate": mr_src.decay_rate,
+                        "emotional_valence": mr_src.emotional_valence,
+                        "arousal": mr_src.arousal,
                         "vector": vec,
                     }
                     self._table.add([payload])
                     out.append(
                         MemoryRecord(
                             id=mid,
-                            timestamp=datetime.fromisoformat(payload["timestamp"]),
-                            category=payload["category"],
-                            content=payload["content"],
-                            importance=payload["importance"],
+                            timestamp=mr_src.timestamp,
+                            category=mr_src.category,
+                            content=mr_src.content,
+                            importance=mr_src.importance,
                             last_recall=datetime.fromisoformat(now_iso),
                             recall_count=rc,
-                            decay_rate=payload["decay_rate"],
+                            decay_rate=mr_src.decay_rate,
+                            emotional_valence=mr_src.emotional_valence,
+                            arousal=mr_src.arousal,
                         )
                     )
                 except Exception as e:
@@ -433,6 +519,8 @@ class LanceMemoryStore:
                                 "last_recall": row.last_recall.isoformat(),
                                 "recall_count": row.recall_count,
                                 "decay_rate": row.decay_rate,
+                                "emotional_valence": row.emotional_valence,
+                                "arousal": row.arousal,
                                 "vector": vec,
                             }
                         ]
@@ -468,19 +556,22 @@ class LanceMemoryStore:
                 if filt.num_rows == 0:
                     return False
                 row = filt.slice(0, 1)
+                mr = _record_from_table(row, 0)
                 self._table.delete(f"id = '{lit}'")
                 vec = row.column("vector")[0].as_py()
                 self._table.add(
                     [
                         {
                             "id": memory_id,
-                            "timestamp": row.column("timestamp")[0].as_py(),
-                            "category": row.column("category")[0].as_py(),
-                            "content": row.column("content")[0].as_py(),
+                            "timestamp": mr.timestamp.isoformat(),
+                            "category": mr.category,
+                            "content": mr.content,
                             "importance": imp,
-                            "last_recall": row.column("last_recall")[0].as_py(),
-                            "recall_count": int(row.column("recall_count")[0].as_py()),
-                            "decay_rate": float(row.column("decay_rate")[0].as_py()),
+                            "last_recall": mr.last_recall.isoformat(),
+                            "recall_count": mr.recall_count,
+                            "decay_rate": mr.decay_rate,
+                            "emotional_valence": mr.emotional_valence,
+                            "arousal": mr.arousal,
                             "vector": vec,
                         }
                     ]

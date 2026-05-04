@@ -50,7 +50,16 @@ def test_memory_v2_embeddings_backend_invalid() -> None:
 
 
 def test_validate_modulated_by_unknown() -> None:
-    from iskra.core.config import StateConfig, StateVariableConfig, TriggerConfig, TriggerIntervalConfig, TriggerTypeConfig
+    from iskra.core.config import (
+        IntentConfig,
+        MemoryConfig,
+        MemoryRecallConfig,
+        StateConfig,
+        StateVariableConfig,
+        TriggerConfig,
+        TriggerIntervalConfig,
+        TriggerTypeConfig,
+    )
 
     state = StateConfig(
         variables={"x": StateVariableConfig(initial=0.5, mu=0.5, theta=0.1, sigma=0.1)},
@@ -62,21 +71,30 @@ def test_validate_modulated_by_unknown() -> None:
         types={"t": TriggerTypeConfig(base_weight=1.0)},
         random_topic_pool=["a"],
     )
-    from iskra.core.config import IntentConfig
 
     cfg = IskraConfig(
         schema_version=1,
         state=state,
         trigger=trig,
         intent=IntentConfig(system_prompt_template="x", user_prompts={"default": "d"}),
+        memory=MemoryConfig(recall=MemoryRecallConfig(emotion_enabled=False)),
     )
     with pytest.raises(ValueError, match="modulated_by"):
         validate_cross_config(cfg)
 
 
 def test_validate_self_reflection_requires_user_prompt() -> None:
-    from iskra.core.config import GeneralConfig, IntentConfig, MemoryConfig, StateConfig, TriggerConfig, TriggerIntervalConfig, TriggerTypeConfig
-    from iskra.core.config import StateVariableConfig
+    from iskra.core.config import (
+        GeneralConfig,
+        IntentConfig,
+        MemoryConfig,
+        MemoryRecallConfig,
+        StateConfig,
+        TriggerConfig,
+        TriggerIntervalConfig,
+        TriggerTypeConfig,
+        StateVariableConfig,
+    )
 
     state = StateConfig(
         variables={"x": StateVariableConfig(initial=0.5, mu=0.5, theta=0.1, sigma=0.1)},
@@ -93,7 +111,7 @@ def test_validate_self_reflection_requires_user_prompt() -> None:
         schema_version=1,
         state=state,
         trigger=trig,
-        memory=MemoryConfig(),
+        memory=MemoryConfig(recall=MemoryRecallConfig(emotion_enabled=False)),
         intent=IntentConfig(system_prompt_template="s", user_prompts={"default": "d"}),
         general=gen,
     )
@@ -109,3 +127,132 @@ def test_validate_self_reflection_requires_user_prompt() -> None:
         }
     )
     validate_cross_config(cfg_ok)
+
+
+def test_random_topic_pool_file_appends_topics(tmp_path: Path) -> None:
+    (tmp_path / "topics.yaml").write_text(
+        "topics:\n  - zeta\n",
+        encoding="utf-8",
+    )
+    src = Path(__file__).resolve().parent / "minimal.yaml"
+    raw = src.read_text(encoding="utf-8")
+    raw = raw.replace("data/test_memory.db", (tmp_path / "mem.db").as_posix())
+    raw = raw.replace("data/test_events.jsonl", (tmp_path / "ev.jsonl").as_posix())
+    raw = raw.replace("data/test_iskra.pid", (tmp_path / "p.pid").as_posix())
+    raw = raw.replace('data_dir: "data"', f'data_dir: "{tmp_path.as_posix()}"')
+    raw = raw.replace(
+        '  random_topic_pool:\n    - "test-topic-alpha"\n    - "test-topic-beta"',
+        '  random_topic_pool:\n    - "alpha"\n  random_topic_pool_file: "topics.yaml"',
+    )
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(raw, encoding="utf-8")
+    cfg = load_config(cfg_path)
+    assert cfg.trigger.random_topic_pool[:2] == ["alpha", "zeta"]
+
+
+def test_random_topic_pool_file_root_list(tmp_path: Path) -> None:
+    (tmp_path / "topics.yaml").write_text('- "uno"\n- "due"\n', encoding="utf-8")
+    src = Path(__file__).resolve().parent / "minimal.yaml"
+    raw = src.read_text(encoding="utf-8")
+    raw = raw.replace("data/test_memory.db", (tmp_path / "mem.db").as_posix())
+    raw = raw.replace("data/test_events.jsonl", (tmp_path / "ev.jsonl").as_posix())
+    raw = raw.replace("data/test_iskra.pid", (tmp_path / "p.pid").as_posix())
+    raw = raw.replace('data_dir: "data"', f'data_dir: "{tmp_path.as_posix()}"')
+    raw = raw.replace(
+        '  random_topic_pool:\n    - "test-topic-alpha"\n    - "test-topic-beta"',
+        '  random_topic_pool: []\n  random_topic_pool_file: "topics.yaml"',
+    )
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(raw, encoding="utf-8")
+    cfg = load_config(cfg_path)
+    assert cfg.trigger.random_topic_pool == ["uno", "due"]
+
+
+def test_random_topic_pool_file_missing_raises(tmp_path: Path) -> None:
+    src = Path(__file__).resolve().parent / "minimal.yaml"
+    raw = src.read_text(encoding="utf-8")
+    raw = raw.replace("data/test_memory.db", (tmp_path / "mem.db").as_posix())
+    raw = raw.replace("data/test_events.jsonl", (tmp_path / "ev.jsonl").as_posix())
+    raw = raw.replace("data/test_iskra.pid", (tmp_path / "p.pid").as_posix())
+    raw = raw.replace('data_dir: "data"', f'data_dir: "{tmp_path.as_posix()}"')
+    raw = raw.replace(
+        '  random_topic_pool:\n    - "test-topic-alpha"\n    - "test-topic-beta"',
+        '  random_topic_pool: []\n  random_topic_pool_file: "nope.yaml"',
+    )
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(raw, encoding="utf-8")
+    with pytest.raises(ValueError, match="not found"):
+        load_config(cfg_path)
+
+
+def test_validate_impulses_unknown_variable() -> None:
+    from iskra.core.config import (
+        IntentConfig,
+        IskraConfig,
+        MemoryConfig,
+        MemoryRecallConfig,
+        StateConfig,
+        StateVariableConfig,
+        TriggerConfig,
+        TriggerIntervalConfig,
+        TriggerTypeConfig,
+    )
+
+    state = StateConfig(
+        variables={
+            "x": StateVariableConfig(initial=0.5, mu=0.5, theta=0.1, sigma=0.1),
+        },
+        impulses={"startup": {"y": 0.05}},
+        feedback={},
+    )
+    trig = TriggerConfig(
+        interval=TriggerIntervalConfig(min_seconds=1, max_seconds=10, modulated_by=None),
+        types={"new_topic": TriggerTypeConfig(base_weight=1.0)},
+        random_topic_pool=["a"],
+    )
+    cfg = IskraConfig(
+        schema_version=1,
+        state=state,
+        trigger=trig,
+        intent=IntentConfig(system_prompt_template="s", user_prompts={"default": "d"}),
+        memory=MemoryConfig(recall=MemoryRecallConfig(emotion_enabled=False)),
+    )
+    with pytest.raises(ValueError, match="impulses.startup"):
+        validate_cross_config(cfg)
+
+
+def test_validate_emotion_recall_requires_valence_arousal_in_state() -> None:
+    from iskra.core.config import (
+        IntentConfig,
+        IskraConfig,
+        MemoryConfig,
+        MemoryRecallConfig,
+        StateConfig,
+        StateVariableConfig,
+        TriggerConfig,
+        TriggerIntervalConfig,
+        TriggerTypeConfig,
+    )
+
+    state = StateConfig(
+        variables={
+            "x": StateVariableConfig(initial=0.5, mu=0.5, theta=0.1, sigma=0.1),
+        },
+        impulses={},
+        feedback={},
+    )
+    trig = TriggerConfig(
+        interval=TriggerIntervalConfig(min_seconds=1, max_seconds=10, modulated_by=None),
+        types={"new_topic": TriggerTypeConfig(base_weight=1.0)},
+        random_topic_pool=["a"],
+    )
+    memory = MemoryConfig(recall=MemoryRecallConfig(emotion_enabled=True))
+    cfg = IskraConfig(
+        schema_version=1,
+        state=state,
+        trigger=trig,
+        intent=IntentConfig(system_prompt_template="s", user_prompts={"default": "d"}),
+        memory=memory,
+    )
+    with pytest.raises(ValueError, match="emotion_enabled"):
+        validate_cross_config(cfg)

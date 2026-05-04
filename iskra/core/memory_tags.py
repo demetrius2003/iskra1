@@ -1,4 +1,4 @@
-"""Парсинг и исполнение тегов памяти в ответе LLM (см. docs/CONFIG_SCHEMA.md)."""
+"""Парсинг и исполнение тегов памяти и веб-поиска в тексте LLM / входящего файла (см. docs/CONFIG_SCHEMA.md)."""
 
 from __future__ import annotations
 
@@ -16,6 +16,8 @@ _TAG_LINE = re.compile(
     r"^\[(MEMORY_REQUEST|MEMORY_UPDATE|MEMORY_SAVE|MEMORY_DELETE)\]\s*(.*)\s*$",
     re.IGNORECASE,
 )
+
+_WEB_SEARCH_LINE = re.compile(r"^\[WEB_SEARCH\]\s*(.*)\s*$", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -180,10 +182,31 @@ def parse_memory_tags(text: str) -> list[MemoryTagOp]:
 def strip_tag_lines(text: str) -> str:
     lines_out: list[str] = []
     for line in text.splitlines():
-        if _TAG_LINE.match(line.strip()):
+        s = line.strip()
+        if _TAG_LINE.match(s) or _WEB_SEARCH_LINE.match(s):
             continue
         lines_out.append(line)
     return "\n".join(lines_out)
+
+
+def parse_web_search_queries(text: str) -> list[str]:
+    """Строки ``[WEB_SEARCH] …``: полный хвост или поля ``query:`` / ``запрос:`` / ``исследование:``."""
+    out: list[str] = []
+    for line in text.splitlines():
+        m = _WEB_SEARCH_LINE.match(line.strip())
+        if not m:
+            continue
+        rest = (m.group(1) or "").strip()
+        if not rest:
+            continue
+        fields = _split_fields(rest)
+        fld = {k.strip().lower(): v for k, v in fields}
+        q = fld.get("query") or fld.get("запрос") or fld.get("исследование")
+        if q:
+            out.append(q.strip())
+        else:
+            out.append(rest)
+    return out
 
 
 def apply_memory_tags(
@@ -194,10 +217,10 @@ def apply_memory_tags(
     default_category: str,
     recall_n: int = 5,
 ) -> None:
-    """Исполнить теги: L0 — только REQUEST; L1 — SAVE/UPDATE/links; L2 — то же + пол ``importance`` не ниже ``l2_importance_floor``; L3 — + ``MEMORY_DELETE``."""
+    """Исполнить теги: L0 — только REQUEST; L1 — только предложения SAVE/UPDATE в лог (ядро не мутирует память); L2 — SAVE/UPDATE/links + пол ``importance`` не ниже ``l2_importance_floor``; L3 — + ``MEMORY_DELETE``."""
     for op in ops:
         if isinstance(op, MemoryRequestTag):
-            recalled = store.recall(category=None, n=recall_n, context=op.query)
+            recalled = store.recall(category=None, n=recall_n, context=op.query, state=None)
             logger.info(
                 "MEMORY_REQUEST query=%r -> %d записей",
                 op.query[:80],
@@ -211,16 +234,34 @@ def apply_memory_tags(
             ok = store.delete_memory(op.memory_id)
             logger.info("MEMORY_DELETE id=%s -> %s", op.memory_id, ok)
             continue
-        if agency.level < 1:
-            logger.info("agency L0: пропуск SAVE/UPDATE для памяти")
-            continue
         if isinstance(op, MemorySaveTag):
+            if agency.level < 1:
+                logger.info("agency L0: пропуск MEMORY_SAVE")
+                continue
             imp = op.importance if op.importance is not None else 0.7
+            if agency.level == 1:
+                logger.info(
+                    "agency L1 suggest (не исполнено): MEMORY_SAVE content=%r importance=%s",
+                    op.content[:500],
+                    imp,
+                )
+                continue
             mid = store.store(default_category, op.content, imp)
             if mid:
                 logger.info("MEMORY_SAVE -> id=%s", mid)
             continue
         if isinstance(op, MemoryUpdateTag):
+            if agency.level < 1:
+                logger.info("agency L0: пропуск MEMORY_UPDATE")
+                continue
+            if agency.level == 1:
+                logger.info(
+                    "agency L1 suggest (не исполнено): MEMORY_UPDATE id=%s importance=%s links=%s",
+                    op.memory_id,
+                    op.importance,
+                    list(op.link_add) if op.link_add else (),
+                )
+                continue
             did = False
             if op.importance is not None:
                 imp = op.importance

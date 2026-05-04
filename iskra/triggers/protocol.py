@@ -13,4 +13,9 @@ class TriggerType(Protocol):
     base_weight: float
 
     def compute_weight(self, state: StateSnapshot) -> float: ...
-    def generate_context(self, memory: MemoryStore) -> list[MemoryRecord]: ...
+    def generate_context(
+        self,
+        memory: MemoryStore,
+        *,
+        state: StateSnapshot | None = None,
+    ) -> list[MemoryRecord]: ...

@@ -18,6 +18,18 @@ state:
       mu: 0.2
       theta: 0.04
       sigma: 0.05
+    valence:
+      clamp_min: -1.0
+      clamp_max: 1.0
+      initial: 0.0
+      mu: 0.0
+      theta: 0.04
+      sigma: 0.06
+    arousal:
+      initial: 0.35
+      mu: 0.35
+      theta: 0.03
+      sigma: 0.05
   impulses:
     system_startup:
       curiosity: 0.05

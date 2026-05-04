@@ -10,6 +10,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from iskra.core.config import MemoryConfig
+from iskra.memory.recall_scoring import recall_emotion_bonus_from_vals
 from iskra.models import MemoryRecord
 
 logger = logging.getLogger("iskra.memory")
@@ -23,11 +24,30 @@ CREATE TABLE IF NOT EXISTS memories (
     importance REAL NOT NULL DEFAULT 0.5,
     last_recall TEXT NOT NULL,
     recall_count INTEGER NOT NULL DEFAULT 0,
-    decay_rate REAL NOT NULL DEFAULT 0.01
+    decay_rate REAL NOT NULL DEFAULT 0.01,
+    emotional_valence REAL NOT NULL DEFAULT 0.0,
+    arousal REAL NOT NULL DEFAULT 0.5
 );
 CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(category);
 CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance DESC);
 """
+
+
+def _sqlite_ev_ar(row: sqlite3.Row) -> tuple[float, float]:
+    keys = row.keys()
+    ev = float(row["emotional_valence"]) if "emotional_valence" in keys else 0.0
+    ar = float(row["arousal"]) if "arousal" in keys else 0.5
+    return ev, ar
+
+
+def _migrate_sqlite_emotion_columns(conn: sqlite3.Connection) -> None:
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(memories)").fetchall()}
+    if "emotional_valence" not in cols:
+        conn.execute(
+            "ALTER TABLE memories ADD COLUMN emotional_valence REAL NOT NULL DEFAULT 0.0"
+        )
+    if "arousal" not in cols:
+        conn.execute("ALTER TABLE memories ADD COLUMN arousal REAL NOT NULL DEFAULT 0.5")
 
 
 class SQLiteMemoryStore:
@@ -40,23 +60,35 @@ class SQLiteMemoryStore:
         self._lock = threading.Lock()
         with self._lock:
             self._conn.executescript(_SCHEMA)
+            _migrate_sqlite_emotion_columns(self._conn)
             self._conn.commit()
 
-    def store(self, category: str, content: str, importance: float) -> str:
+    def store(
+        self,
+        category: str,
+        content: str,
+        importance: float,
+        *,
+        emotional_valence: float = 0.0,
+        arousal: float = 0.5,
+    ) -> str:
         if not content.strip():
             logger.warning("store skipped: empty content")
             return ""
         mid = str(uuid4())
         now = datetime.now(UTC).isoformat()
         imp = max(0.0, min(1.0, importance))
+        ev = max(-1.0, min(1.0, float(emotional_valence)))
+        ar = max(0.0, min(1.0, float(arousal)))
         base_rate = self._config.decay.base_rate
         try:
             with self._lock:
                 self._conn.execute(
                     """INSERT INTO memories
-                    (id, timestamp, category, content, importance, last_recall, recall_count, decay_rate)
-                    VALUES (?, ?, ?, ?, ?, ?, 0, ?)""",
-                    (mid, now, category, content, imp, now, base_rate),
+                    (id, timestamp, category, content, importance, last_recall, recall_count, decay_rate,
+                     emotional_valence, arousal)
+                    VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)""",
+                    (mid, now, category, content, imp, now, base_rate, ev, ar),
                 )
                 self._conn.commit()
         except sqlite3.Error as e:
@@ -65,9 +97,14 @@ class SQLiteMemoryStore:
         return mid
 
     def recall(
-        self, category: str | None = None, n: int = 3, context: str | None = None
+        self,
+        category: str | None = None,
+        n: int = 3,
+        context: str | None = None,
+        *,
+        state: dict[str, float] | None = None,
     ) -> list[MemoryRecord]:
-        del context  # MVP unused
+        del context  # семантический recall в SQLite не используется
         n = max(1, n)
         try:
             with self._lock:
@@ -92,7 +129,12 @@ class SQLiteMemoryStore:
             last_recall = datetime.fromisoformat(row["last_recall"])
             hours_since = (now - last_recall).total_seconds() / 3600.0
             recency = 1.0 / (1.0 + hours_since)
-            score = row["importance"] * iw + recency * rw
+            ev, _ar = _sqlite_ev_ar(row)
+            score = (
+                row["importance"] * iw
+                + recency * rw
+                + recall_emotion_bonus_from_vals(ev, state, self._config.recall)
+            )
             scored.append((score, row))
 
         selection = self._config.recall.selection
@@ -119,6 +161,7 @@ class SQLiteMemoryStore:
         return records
 
     def _row_to_record(self, row: sqlite3.Row) -> MemoryRecord:
+        ev, ar = _sqlite_ev_ar(row)
         return MemoryRecord(
             id=row["id"],
             timestamp=datetime.fromisoformat(row["timestamp"]),
@@ -128,6 +171,8 @@ class SQLiteMemoryStore:
             last_recall=datetime.fromisoformat(row["last_recall"]),
             recall_count=row["recall_count"],
             decay_rate=row["decay_rate"],
+            emotional_valence=ev,
+            arousal=ar,
         )
 
     def decay(self) -> None:

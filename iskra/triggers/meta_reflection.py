@@ -19,6 +19,8 @@ class MetaReflectionTrigger:
         mod = state.get(self._cfg.modulated_by, 0.0)
         return self._cfg.base_weight * (1.0 + self._cfg.modulation_strength * mod)
 
-    def generate_context(self, memory: MemoryStore) -> list[MemoryRecord]:
-        del memory
+    def generate_context(
+        self, memory: MemoryStore, *, state: StateSnapshot | None = None
+    ) -> list[MemoryRecord]:
+        del memory, state
         return []

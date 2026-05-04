@@ -21,6 +21,18 @@ state:
       mu: 0.2
       theta: 0.04
       sigma: 0.05
+    valence:
+      clamp_min: -1.0
+      clamp_max: 1.0
+      initial: 0.0
+      mu: 0.0
+      theta: 0.04
+      sigma: 0.06
+    arousal:
+      initial: 0.35
+      mu: 0.35
+      theta: 0.03
+      sigma: 0.05
 
   impulses:
     user_message:
@@ -39,6 +51,8 @@ state:
       condition: "ends_with_question_mark"
       curiosity: 0.05
       restlessness: 0.03
+      valence: 0.03
+      arousal: 0.04
     response_short:
       condition: "length_lt_50"
       curiosity: -0.03
@@ -47,6 +61,7 @@ state:
       condition: "length_gt_500"
       curiosity: 0.03
       restlessness: -0.03
+      valence: 0.02
     trigger_was_recall:
       condition: "trigger_type_eq_recall_memory"
       nostalgia: -0.08
@@ -90,22 +105,9 @@ trigger:
       modulation_strength: 0.5
       context_source: null
 
-  random_topic_pool:
-    - "квантовая запутанность"
-    - "история письменности"
-    - "эволюция кошачьих"
-    - "фрактальная геометрия"
-    - "философия сознания"
-    - "археология Месопотамии"
-    - "теория музыки"
-    - "вулканология"
-    - "криптография"
-    - "нейропластичность"
-    - "парадоксы бесконечности"
-    - "симбиоз в природе"
-    - "история компьютеров"
-    - "теория хаоса"
-    - "лингвистика жестовых языков"
+  # Темы для new_topic — во внешнем файле (не засорять основной конфиг).
+  random_topic_pool_file: "data/random_topic_pool.yaml"
+  random_topic_pool: []
 
 memory:
   # LanceDB + эмбеддинги: pip install iskra[memory]. Перенос со старого SQLite:
@@ -121,6 +123,9 @@ memory:
     importance_weight: 0.7
     recency_weight: 0.3
     selection: "stochastic"
+    emotion_enabled: true
+    emotion_valence_alignment_weight: 0.15
+    emotion_nostalgia_positive_weight: 0.10
 
   decay:
     enabled: true
@@ -128,7 +133,7 @@ memory:
     min_importance: 0.01
     recall_protection: 1.5
 
-  initial_memories_file: null
+  initial_memories_file: "seed_memories.yaml"
 
   v2:
     enabled: true
@@ -147,6 +152,11 @@ agency:
   level: 3
   l2_importance_floor: 0.12
 
+emotion_classifier:
+  lexicon_file: "emotion_lexicon.yaml"
+  valence_blend: 0.12
+  arousal_blend: 0.14
+
 intent:
   system_prompt_template: |
     Ты — живое существо с внутренним миром. Прямо сейчас у тебя
@@ -164,12 +174,29 @@ intent:
     {{ external_input }}
     {% endif %}
 
+    При необходимости ты можешь искать во внешнем мире (интернет): добавь отдельной строкой
+    тег вида [WEB_SEARCH] query: "..." или [WEB_SEARCH] запрос: "..." (или просто текст запроса после тега).
+    Делай это только когда нужна конкретная информация, которой у тебя нет; не чаще одного такого запроса за одну мысль.
+
   user_prompts:
     new_topic: "Тебе вдруг стало интересно: {{ context }}{% if external_input %}\n\n(Во внимание, пришло снаружи: {{ external_input }}){% endif %}"
     recall_memory: "Ты вдруг вспомнил: \"{{ context }}\"{% if external_input %}\n\n(Снаружи: {{ external_input }}){% endif %}"
     continue_context: "Ты продолжаешь думать о: {{ context }}{% if external_input %}\n\n(Снаружи: {{ external_input }}){% endif %}"
     meta_reflection: "Ты задумался о том, как устроено твоё собственное мышление.{% if external_input %}\n\n(Сообщение снаружи, если хочешь — вплети: {{ external_input }}){% endif %}"
-    self_reflection: "Плановая пауза: оглянись на недавние воспоминания.{% if memories %}\n{% for m in memories %}- {{ m }}\n{% endfor %}{% endif %}{% if external_input %}\n\n(Снаружи: {{ external_input }}){% endif %}"
+    self_reflection: |
+      Углублённая пауза самонаблюдения. Ниже воспоминания с пометкой эмоциональной окраски записей (как ты их переживал раньше).
+      {% if memory_lines %}
+      {% for line in memory_lines %}{{ line }}
+      {% endfor %}
+      {% elif memories %}
+      {% for m in memories %}- {{ m }}
+      {% endfor %}
+      {% endif %}
+      Задача: найди 1–2 повторяющихся темы или формулировки («я часто возвращаюсь к…»). Сформулируй короткое наблюдение о себе одним-двумя предложениями — это будет сохранено как инсайт.
+      {% if external_input %}
+
+      (Снаружи: {{ external_input }})
+      {% endif %}
     default: "У тебя возникла мысль: {{ context }}{% if external_input %}\n\n(Снаружи: {{ external_input }}){% endif %}"
 
   max_response_tokens: 500
@@ -215,6 +242,22 @@ llm:
     backoff_base_seconds: 1.0
   cooldown_on_rate_limit_seconds: 300
 
+# Веб-поиск (DuckDuckGo → сводка через LLM → память web_research). pip install duckduckgo-search или pip install ".[web]" из корня репозитория
+tools:
+  web_search:
+    enabled: true
+    max_results: 5
+    summary_max_tokens: 300
+    max_per_tick: 1
+    max_per_hour: 5
+    memory_importance: 0.8
+    memory_category: web_research
+    log_snippet_count: true
+    log_snippet_previews: true
+    log_snippet_preview_limit: 5
+    log_snippet_preview_chars: 280
+    log_summary_preview_chars: 320
+
 output:
   channel: "console"
   settings:
@@ -230,6 +273,7 @@ output:
 logging:
   level: "INFO"
   format: "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+  highlight_primp_logs: true
   event_log:
     enabled: true
     path: "data/events.jsonl"
@@ -250,3 +294,7 @@ general:
   tick_jitter: 0.1
   data_dir: "data"
   pid_file: "data/iskra.pid"
+  self_reflection_insight:
+    enabled: true
+    importance: 0.85
+    category: self_insight

@@ -6,9 +6,22 @@ from iskra.models import MemoryRecord
 
 
 class MemoryStore(Protocol):
-    def store(self, category: str, content: str, importance: float) -> str: ...
+    def store(
+        self,
+        category: str,
+        content: str,
+        importance: float,
+        *,
+        emotional_valence: float = 0.0,
+        arousal: float = 0.5,
+    ) -> str: ...
     def recall(
-        self, category: str | None = None, n: int = 3, context: str | None = None
+        self,
+        category: str | None = None,
+        n: int = 3,
+        context: str | None = None,
+        *,
+        state: dict[str, float] | None = None,
     ) -> list[MemoryRecord]: ...
     def decay(self) -> None: ...
     def count(self) -> int: ...

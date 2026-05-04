@@ -65,6 +65,28 @@ class OUStateEngine:
         for _rule_name, rule in self._cfg.feedback.items():
             self._apply_rule(rule, trigger_type, llm_response)
 
+    def blend_emotion_toward_sample(
+        self,
+        sample_valence: float,
+        sample_arousal: float,
+        *,
+        valence_blend: float,
+        arousal_blend: float,
+    ) -> None:
+        """Подтянуть ``valence`` / ``arousal`` к оценке классификатора текста ответа."""
+        if "valence" in self._vars and "valence" in self._cfg.variables:
+            vc = self._cfg.variables["valence"]
+            cur = self._vars["valence"]
+            self._vars["valence"] = _clamp(
+                cur + valence_blend * (sample_valence - cur), vc.clamp_min, vc.clamp_max
+            )
+        if "arousal" in self._vars and "arousal" in self._cfg.variables:
+            vc = self._cfg.variables["arousal"]
+            cur = self._vars["arousal"]
+            self._vars["arousal"] = _clamp(
+                cur + arousal_blend * (sample_arousal - cur), vc.clamp_min, vc.clamp_max
+            )
+
     def _apply_rule(self, rule: FeedbackRuleConfig, trigger_type: str, llm_response: str) -> None:
         if not evaluate_condition(rule.condition, trigger_type, llm_response):
             return

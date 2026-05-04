@@ -57,6 +57,12 @@ def migrate_sqlite_to_lance(
         if not content.strip():
             continue
         vec = embedder(content)
+        ev = (
+            float(row["emotional_valence"])
+            if "emotional_valence" in row.keys()
+            else 0.0
+        )
+        ar = float(row["arousal"]) if "arousal" in row.keys() else 0.5
         payload = {
             "id": str(row["id"]),
             "timestamp": str(row["timestamp"]),
@@ -66,6 +72,8 @@ def migrate_sqlite_to_lance(
             "last_recall": str(row["last_recall"]),
             "recall_count": int(row["recall_count"]),
             "decay_rate": float(row["decay_rate"]),
+            "emotional_valence": ev,
+            "arousal": ar,
             "vector": vec,
         }
         lance.put_raw(payload)

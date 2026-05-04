@@ -30,6 +30,8 @@ class MemoryRecord:
     last_recall: datetime
     recall_count: int
     decay_rate: float
+    emotional_valence: float = 0.0  # [-1, 1] приятность переживания
+    arousal: float = 0.5  # [0, 1] интенсивность / возбуждённость
 
 
 @dataclass(frozen=True)

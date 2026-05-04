@@ -1,0 +1,5 @@
+# Только для unit-тестов merge лексикона.
+positive_words:
+  - допслово
+negative_words: []
+high_arousal_words: []

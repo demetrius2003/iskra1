@@ -21,7 +21,7 @@
 - [x] **Memory Store** Lance + фабрика `create_memory_store` (`memory.backend: lance`).  
 - [x] **Эмбеддинги** (`sentence-transformers`) и векторный recall при `recall(..., context=...)`.  
 - [x] **Граф** связей: NetworkX, JSON (`memory_graph.json` или `graph_edges_path`), тег `links`, `recall_graph_extra`.  
-- [x] Парсер **тегов** + исполнение по `agency.level` (L0: только REQUEST; L1+: SAVE/UPDATE).  
+- [x] Парсер **тегов** + исполнение по `agency.level` (L0: только REQUEST; L1: предложения SAVE/UPDATE в лог без мутаций store; L2+: исполнение SAVE/UPDATE/links; L3: DELETE).  
 - [x] Тесты: `test_memory_tags`, `test_lance_store` (при установленном `lancedb`), инвариант конфига.  
 - [x] Фрагмент в [QUICKSTART.md](QUICKSTART.md) § 4b; [PUBLIC_API.md](PUBLIC_API.md) без новых символов в `__all__`.
 

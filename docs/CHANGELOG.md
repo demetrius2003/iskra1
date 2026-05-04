@@ -2,6 +2,19 @@
 
 Все существенные изменения пакета `iskra` и публичного API описываются здесь. Формат по мотивам [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/); нумерация — [SemVer](https://semver.org/lang/ru/). Версия прод дублируется в [VERSION](../VERSION) (`PRODUCT_VERSION`).
 
+## [0.5.0] — 2026-04-28
+
+### Добавлено
+
+- **Эмоции v0.5:** поля памяти `emotional_valence` (−1…1), `arousal` (0…1); переменные состояния **`valence`** (OU, bipolar −1…1) и **`arousal`** (0…1); лексикон **`emotion_classifier.lexicon_file`** и класс **`EmotionClassifier`** (экспорт из корня пакета); после ответа LLM — запись эмоций в память и сглаженное подтягивание состояния (`valence_blend`, `arousal_blend`).
+- **Recall:** модификаторы score `memory.recall.emotion_valence_alignment_weight`, `emotion_nostalgia_positive_weight`, `emotion_enabled`; триггеры передают `state` в `MemoryStore.recall`.
+- **Рефлексия:** `general.self_reflection_insight` — при плановой `self_reflection` основная запись памяти сохраняется с категорией инсайта и заданным `importance`; промпт получает `memory_lines` с разметкой эмоций записей.
+
+### Изменено
+
+- **`MemoryStore.store` / `recall`:** необязательные keyword-аргументы эмоций и `state` для recall (совместимо со старыми вызовами позиционных аргументов).
+- **Lance:** строки содержат `emotional_valence` и `arousal`; если каталог создан до 0.5.0 и добавление строк ломает схему — удалите `memory.v2` или выполните повторную миграцию из SQLite (`py -m iskra migrate`).
+
 ## [Unreleased]
 
 ### Исправлено
@@ -10,17 +23,27 @@
 
 ### Добавлено
 
+- **`trigger.random_topic_pool_file`:** YAML со списком тем для `new_topic`; строки из файла добавляются после `trigger.random_topic_pool`. Относительный путь: сначала текущий каталог, иначе каталог конфигурационного файла. Эталонные темы — `data/random_topic_pool.yaml`.
+- **Контракт журнала:** `EventLogLineModel`, `validate_event_log_line_json` в корневом экспорте — валидация строки `events.jsonl`.
+- **`docs/UPGRADING.md`:** заметки по переходу на эмоции и память 0.5.x.
 - **`memory.v2.embeddings_backend`:** `sentence_transformers` (по умолчанию) или **`hash`** — Lance без PyTorch (`hash_embedding_dim`, по умолчанию 384); эталонный `config.yaml` на Windows/Python без рабочего torch — `hash`.
+- **`emotion_classifier.lexicon_custom_file`:** дополнительный YAML лексикона (объединение множеств с `lexicon_file`); **`max_input_chars`** — опционально обрезать текст ответа перед классификацией (64…500000).
+- **`python -m iskra --dry-run`:** один проход триггера и промптов в лог **INFO** без вызова LLM и без записи в память / `events.jsonl`.
+- **Preflight:** сводка по размеру лексикона эмоций, размеру файла журнала и свободному месту на диске (`data_dir`).
+- **CLI:** подкоманды **`dashboard`** (HTML из `events.jsonl`, Chart.js CDN), **`summary`** (текстовое резюме → `daily_summary.txt`), **`webhook`** (локальный HTTP POST → файл внешнего ввода); см. [QUICKSTART.md](QUICKSTART.md) §3b.
+- **Интеграционный тест:** один тик на Lance с `embeddings_backend: hash` (`tests/test_integration_tick_chain.py`, требуется `lancedb`).
 - **Миграция:** `iskra migrate --dummy-embeddings` и `--hash-dim` — перенос без PyTorch (хеш-векторы); при `embeddings_backend: hash` в конфиге миграция тоже использует хеш; при ошибке загрузки `torch` сообщение подсказывает Python 3.12 или флаги/конфиг.
-
-### Документация
-
-- [QUICKSTART.md](QUICKSTART.md) § **4c**: Windows, PyTorch, WinError 1114 / c10.dll (VC++ Redistributable, CPU wheel, Python 3.12, импорт torch до PyQt).
 
 ### Изменено
 
-- **Preflight:** повторный вызов `validate_cross_config`; проверка `memory.initial_memories_file` (файл есть и читается); для Lance — проба эмбеддингов, запись в `memory.v2.db_path`, при `graph_enabled` — наличие sidecar-графа и путей JSON; для `general.external_input_file` — каталог и чтение файла, если он уже есть.
+- **`validate_cross_config`:** переменные в `state.impulses.*` должны существовать в `state.variables`; при `memory.recall.emotion_enabled: true` обязательны переменные **`valence`** и **`arousal`** в состоянии.
+- **Preflight:** повторный вызов `validate_cross_config`; проверка `memory.initial_memories_file` (файл есть и читается); для Lance — проба эмбеддингов, запись в `memory.v2.db_path`, при `graph_enabled` — наличие sidecar-графа и путей JSON; для `general.external_input_file` — каталог и чтение файла, если он уже есть; для `new_topic` — строка в логе с числом тем в пуле; **лексикон эмоций** (счётчики слов); **journal** — размер текущего JSONL и порог ротации; **диск** — свободное место на томе `data_dir`.
 - **Preflight (лог):** явные строки про SQLite vs Lance/LanceDB, `v2.db_path`, модель эмбеддингов, граф (пути, веса рёбер), `recall_graph_extra`, **agency**, саморефлексию, консолидацию; рамки `========== Iskra-1 предстарт ==========` в логе.
+
+### Документация
+
+- [CONFIG_SCHEMA.md](CONFIG_SCHEMA.md), [QUICKSTART.md](QUICKSTART.md), [FORMAL_SPECIFICATION.md](FORMAL_SPECIFICATION.md): описание внешнего пула тем; секция **`emotion_classifier`**; **`--dry-run`**; **§3b** — `dashboard`, `summary`, `webhook`.
+- [QUICKSTART.md](QUICKSTART.md) § **4c**: Windows, PyTorch, WinError 1114 / c10.dll (VC++ Redistributable, CPU wheel, Python 3.12, импорт torch до PyQt).
 
 ## [0.4.4] — 2026-04-25
 

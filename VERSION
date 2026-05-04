@@ -3,11 +3,11 @@
 # Подробности: docs/VERSIONING.md
 
 # Версия продукта (исходный код и релизы). SemVer: MAJOR.MINOR.PATCH
-PRODUCT_VERSION=0.4.4
+PRODUCT_VERSION=0.6.0
 
 # Версия комплекта документов (ТЗ, FORMAL_SPEC, CONFIG_SCHEMA, выровненные пути).
 # SemVer. Меняется при существенных правках спецификации.
-DOCUMENTATION_BUNDLE=1.5.1
+DOCUMENTATION_BUNDLE=1.7.0
 
 # Значение поля schema_version в config.yaml (см. docs/CONFIG_SCHEMA.md).
 CONFIG_SCHEMA_VERSION=1

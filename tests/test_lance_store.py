@@ -159,6 +159,42 @@ def test_lance_consolidate_duplicate_content(tmp_path) -> None:
     assert got[0].importance == pytest.approx(0.9)
 
 
+def test_lance_migrate_emotion_columns(tmp_path) -> None:
+    """Таблица без emotional_valence/arousal получает колонки при открытии (БД до ~0.5)."""
+    import lancedb
+
+    db_path = tmp_path / "legacy_emotion"
+    db_path.mkdir(parents=True, exist_ok=True)
+    db = lancedb.connect(str(db_path))
+    dim = 4
+    db.create_table(
+        LanceMemoryStore._TABLE,
+        [
+            {
+                "id": "old1",
+                "timestamp": "2020-01-01T00:00:00+00:00",
+                "category": "c",
+                "content": "legacy row",
+                "importance": 0.5,
+                "last_recall": "2020-01-01T00:00:00+00:00",
+                "recall_count": 0,
+                "decay_rate": 0.01,
+                "vector": [0.1] * dim,
+            },
+        ],
+    )
+    cfg = MemoryConfig(
+        backend="lance",
+        v2=MemoryV2Config(enabled=True, db_path=str(db_path)),
+    )
+    store = LanceMemoryStore(cfg, embedder=_fake_embedder(dim))
+    at = store._table.to_arrow()
+    assert "emotional_valence" in at.column_names
+    assert "arousal" in at.column_names
+    mid = store.store("c", "after migrate", 0.7, emotional_valence=0.2, arousal=0.6)
+    assert mid
+
+
 def test_lance_vector_recall_with_context(tmp_path) -> None:
     """При непустом ``context`` используется векторный поиск (без проверки ранжирования)."""
     cfg = MemoryConfig(

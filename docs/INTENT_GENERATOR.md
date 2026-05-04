@@ -81,6 +81,7 @@ class IntentPayload:
 - `{{ state }}` — dict переменных состояния (в **system** чаще итерируют `state.items()`);
 - `{{ context }}` — строка контекста от триггера (тема, воспоминание, прошлый ответ);
 - `{{ memories }}` — список извлечённых воспоминаний;
+- `{{ memory_lines }}` — список строк «содержимое + эмоциональная окраска записи» (см. `MemoryRecord.emotional_valence` / `arousal`), удобно для `self_reflection`;
 - `{{ external_input }}` — текст из `general.external_input_file` на **этом** тике, либо пустая строка, если ввода не было.
 
 Если шаблон для конкретного `trigger_type` не найден — используется `default`.

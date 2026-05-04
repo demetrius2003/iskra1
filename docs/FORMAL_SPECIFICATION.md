@@ -497,7 +497,7 @@ user_prompt = template.render(
 ```
 
 Где `context_string` зависит от типа триггера:
-- `new_topic` → случайный элемент из `random_topic_pool`.
+- `new_topic` → случайный элемент из объединённого пула `trigger.random_topic_pool` (инлайн + темы из `trigger.random_topic_pool_file`, если задан).
 - `recall_memory` → `memory_context[0].content` (первое воспоминание).
 - `continue_context` → `memory_context[0].content` (последний ответ LLM из Memory Store, категория `"last_context"`).
 - `meta_reflection` → пустая строка (контекст не нужен).

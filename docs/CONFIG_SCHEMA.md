@@ -1,9 +1,11 @@
 # Config Schema (Схема конфигурации)
 
-**Версия документа:** 1.5.1  
-**Дата:** 25 апреля 2026  
-**Комплект документации:** 1.5.1 (файл `VERSION` в корне репозитория)  
-**Поле `schema_version` в YAML:** `1` (см. также `CONFIG_SCHEMA_VERSION` в `VERSION`). Секции расширенной памяти и `agency` ниже — **утверждённый дизайн**; Pydantic примет их после реализации и при необходимости роста `schema_version` (см. [VERSIONING.md](VERSIONING.md)).
+**Версия документа:** 1.7.0  
+**Дата:** 28 апреля 2026  
+**Комплект документации:** 1.7.0 (файл `VERSION` в корне репозитория)  
+**Поле `schema_version` в YAML:** `1` (см. также `CONFIG_SCHEMA_VERSION` в `VERSION`). С **0.6.0** добавлены **`tools.web_search`** (тег **`[WEB_SEARCH]`**, DuckDuckGo + сводка LLM; зависимость **`duckduckgo-search`**, см. § tools — не путать с одноимённым пакетом **`iskra`** на PyPI). С **0.5.0** добавлены **`emotion_classifier`**, эмоциональные поля памяти и состояния (`valence`, `arousal`). Ранее: секции **`memory.v2`**, **`agency`**, **`intent.user_prompts.self_reflection`**, адаптеры **`gigachat`** / **`yandexgpt`** (с **0.4.x**). При расширении схемы возможен рост `schema_version` (см. [VERSIONING.md](VERSIONING.md)).
+
+Начальные воспоминания (`memory.initial_memories_file`): повторное применение одного и того же файла подавляется маркером `data/.iskra_seed_marker.json` (хеш содержимого и абсолютный путь к YAML).
 
 ## Назначение
 
@@ -11,6 +13,8 @@
 - Никаких хардкод-значений в коде.
 - Полный контроль над поведением без перекомпиляции.
 - Разные «личности» — разные конфиг-файлы.
+
+С **0.5.0** добавлены эмоции и углублённая рефлексия: переменные состояния **`valence`** / **`arousal`**, поля памяти **`emotional_valence`** / **`arousal`**, секция **`emotion_classifier`** (лексикон для классификации текста ответа LLM), в **`memory.recall`** — веса эмоционального recall; **`general.self_reflection_insight`** — сохранение инсайта плановой рефлексии. Подробнее: [STATE_ENGINE.md](STATE_ENGINE.md), [MEMORY_SYSTEM.md](MEMORY_SYSTEM.md).
 
 Файл валидируется при запуске через Pydantic-модель. Если в конфиге ошибка — система не запускается и печатает понятное сообщение.
 
@@ -53,12 +57,27 @@ agency:
 # ─── Intent Generator ──────────────────────────────────────
 intent:
   system_prompt_template: "..."
-  user_prompts: { ... }
+  user_prompts: { ... }        # включая optional self_reflection при general.self_reflection_every_n_ticks
 
 # ─── LLM Adapter ───────────────────────────────────────────
 llm:
   adapter: "ollama"
   settings: { ... }
+
+# ─── Инструменты (опционально) ─────────────────────────────
+tools:
+  web_search:
+    enabled: false
+    max_results: 5
+    summary_max_tokens: 300
+    max_per_tick: 1
+    max_per_hour: 5
+    memory_importance: 0.8
+    memory_category: web_research
+    log_snippet_count: true
+    log_snippet_previews: false
+    log_snippet_preview_chars: 240
+    # log_summary_preview_chars: 320
 
 # ─── Output Channel ────────────────────────────────────────
 output:
@@ -68,6 +87,7 @@ output:
 # ─── Logging & Metrics ─────────────────────────────────────
 logging:
   level: "INFO"
+  highlight_primp_logs: true
   event_log:
     enabled: true
     path: "data/events.jsonl"
@@ -260,20 +280,49 @@ else:
 
 **Пул случайных тем (для `new_topic`):**
 
+- **`trigger.random_topic_pool`** — список строк (можно оставить пустым, если темы только из файла).
+- **`trigger.random_topic_pool_file`** — опционально, путь к YAML с темами. После загрузки конфигурации строки из файла **добавляются в конец** после элементов `random_topic_pool` (инлайн и файл можно комбинировать).
+- Относительный путь разрешается сначала от **текущего рабочего каталога**, если файл там найден; иначе — от **каталога**, в котором лежит загружаемый `config.yaml`.
+
+Форматы файла тем:
+
+```yaml
+topics:
+  - "квантовая запутанность"
+  - "история письменности"
+```
+
+или корневой YAML-массив:
+
+```yaml
+- "тема один"
+- "тема два"
+```
+
+Эталонный репозиторий держит большой список в [`data/random_topic_pool.yaml`](../data/random_topic_pool.yaml), а в [`config.yaml`](../config.yaml) задаёт только `random_topic_pool_file`.
+
+Пример только инлайна (как раньше):
+
 ```yaml
 trigger:
   random_topic_pool:
     - "квантовая запутанность"
     - "история письменности"
-    - "эволюция кошачьих"
-    - "фрактальная геометрия"
-    - "философия сознания"
-    - "археология Месопотамии"
-    - "теория музыки"
-    - "вулканология"
-    - "криптография"
-    - "нейропластичность"
-    # ... пользователь дополняет свои темы
+```
+
+---
+
+### emotion_classifier
+
+Лексикон для оценки эмоций текста ответа LLM (см. [`emotion_lexicon.yaml`](../emotion_lexicon.yaml)).
+
+```yaml
+emotion_classifier:
+  lexicon_file: "emotion_lexicon.yaml"
+  lexicon_custom_file: null    # дополнительный YAML (те же ключи); множества объединяются с основным файлом
+  max_input_chars: null       # или целое 64…500000 — только первые N символов ответа попадают в классификатор
+  valence_blend: 0.12
+  arousal_blend: 0.14
 ```
 
 ---
@@ -332,7 +381,7 @@ agency:
   l2_importance_floor: 0.12          # при level=2: MEMORY_UPDATE importance не ниже этого (L1 и L3 без пола)
 ```
 
-Смысл уровней — в [MEMORY_AND_AGENCY.md](MEMORY_AND_AGENCY.md) §5. Парсер ответа LLM исполняет теги памяти только в рамках `agency.level`.
+Смысл уровней — в [MEMORY_AND_AGENCY.md](MEMORY_AND_AGENCY.md) §5. **Исполнение в коде:** при **L0** из тегов выполняется только эффект `[MEMORY_REQUEST]` (recall в лог); при **L1** `[MEMORY_SAVE]` и `[MEMORY_UPDATE]` **не** изменяют хранилище — в лог пишется строка «предложение»; запись и обновление (включая `links`) — с **L2**; `[MEMORY_DELETE]` — только при **L3**.
 
 #### Протокол тегов в тексте ответа модели
 
@@ -434,7 +483,7 @@ intent:
 
 ```yaml
 llm:
-  adapter: "ollama"               # "mock" | "ollama" | "openai" | "grok" | "anthropic"
+  adapter: "ollama"               # реализовано: "mock" | "ollama" | "gigachat" | "yandexgpt" | "yandex_gpt"; в планах/пример YAML: openai | grok | anthropic
   settings:
     # ─── Mock ─────────────────────────
     # mock:
@@ -479,6 +528,48 @@ llm:
 
 ---
 
+### tools
+
+Опциональные действия во «внешнем мире». Веб-поиск (с **0.6.0**): строки **`[WEB_SEARCH]`** во входящем файле `general.external_input_file` или в сыром ответе модели → DuckDuckGo (пакет **`duckduckgo-search`**) → краткая сводка тем же LLM-адаптером → запись в память с категорией по умолчанию **`web_research`**.
+
+Установка: **`pip install duckduckgo-search`** или из корня репозитория Iskra-1 **`pip install ".[web]"`** (на PyPI пакет **`iskra`** — другой проект, **`pip install iskra[web]`** не подтягивает этот код и это extra). В конфиге по умолчанию **`enabled: false`**.
+
+Лимиты **`max_per_tick`** и скользящий час **`max_per_hour`** задаются в конфиге; при **`max_per_hour: 0`** почасовой потолок отключён.
+
+Форматы строк (каждая с новой строки):
+
+- `[WEB_SEARCH] парадоксы бесконечности Кантор`
+- `[WEB_SEARCH] query: "теорема Гёделя"`
+- `[WEB_SEARCH] запрос: "теорема Гёделя"`
+- `[WEB_SEARCH] исследование: "…"` — синоним поля запроса
+
+Строки с тегом вырезаются из текста мысли перед выводом и перед подстановкой **`external_input`** в промпты (чтобы не дублировать триггер).
+
+**Логирование:** при **`log_snippet_count: true`** (по умолчанию) в лог INFO попадает строка вида «запрос … сниппетов от поиска=N» — если **N > 0**, поиск реально вернул текстовые фрагменты до сводки LLM. **`log_snippet_previews: true`** (по умолчанию с **0.6.x**) добавляет превью первых **`log_snippet_preview_limit`** сниппетов (сырой текст из выдачи). **`log_summary_preview_chars`** (`null` — выключить) — начало сводки после LLM.
+
+Цвет **`primp`** в консоли: **`logging.highlight_primp_logs: true`** (голубые строки HTTP-поиска Bing и т.д.). Отключить все ANSI в логе: переменная окружения **`ISKRA_NO_LOG_COLORS=1`**.
+
+Если во входящем файле **только** строки `[WEB_SEARCH]` (нет другого текста после вырезания тегов), тик выполняет только поиск и сводку, без основного вызова «мысли».
+
+```yaml
+tools:
+  web_search:
+    enabled: false
+    max_results: 5
+    summary_max_tokens: 300      # ориентир в промпте сводки (адаптер может игнорировать отдельный потолок)
+    max_per_tick: 1
+    max_per_hour: 5              # 0 — без почасового лимита
+    memory_importance: 0.8
+    memory_category: web_research
+    log_snippet_count: true
+    log_snippet_previews: true
+    log_snippet_preview_limit: 5
+    log_snippet_preview_chars: 280
+    log_summary_preview_chars: 320   # или null — без превью сводки
+```
+
+---
+
 ### output
 
 ```yaml
@@ -486,7 +577,7 @@ output:
   channel: "console"              # "console" | "file" | "telegram" | "multi"
   settings:
     console:
-      use_rich: true              # красивое форматирование через rich
+      use_rich: true              # Rich: цветные рамки (голубой), тип триггера (пурпур), строка состояния (имена cyan / значения зелёные), текст мысли (жёлтый), URL (ярко-голубой подчёркнутый)
       show_state: true            # показывать переменные состояния
       show_trigger_type: true
       show_timestamp: true
@@ -513,6 +604,7 @@ output:
 logging:
   level: "INFO"                   # "DEBUG" | "INFO" | "WARNING" | "ERROR"
   format: "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+  highlight_primp_logs: true      # голубая подсветка строк логгера primp в TTY; выкл.: false или ISKRA_NO_LOG_COLORS=1
   event_log:
     enabled: true
     path: "data/events.jsonl"     # полный лог всех событий
@@ -645,22 +737,8 @@ trigger:
       modulation_strength: 0.5
       context_source: null
 
-  random_topic_pool:
-    - "квантовая запутанность"
-    - "история письменности"
-    - "эволюция кошачьих"
-    - "фрактальная геометрия"
-    - "философия сознания"
-    - "археология Месопотамии"
-    - "теория музыки"
-    - "вулканология"
-    - "криптография"
-    - "нейропластичность"
-    - "парадоксы бесконечности"
-    - "симбиоз в природе"
-    - "история компьютеров"
-    - "теория хаоса"
-    - "лингвистика жестовых языков"
+  random_topic_pool_file: "data/random_topic_pool.yaml"
+  random_topic_pool: []
 
 memory:
   backend: "sqlite"
@@ -816,6 +894,7 @@ class TriggerConfig(BaseModel):
     interval: TriggerIntervalConfig
     types: dict[str, TriggerTypeConfig]
     random_topic_pool: list[str] = []
+    random_topic_pool_file: str | None = None  # YAML со списком или ключом topics
 
 class MemoryRecallConfig(BaseModel):
     default_n: int = Field(ge=1, default=3)
@@ -901,7 +980,7 @@ class IskraConfig(BaseModel):
 
 ## Загрузка конфигурации (псевдокод)
 
-Реализация: `load_config()` в `iskra/core/config.py`. Сначала `yaml.safe_load`, затем **рекурсивная** подстановка `${VAR_NAME}` **только в строковых значениях** (комментарии в YAML в структуру не попадают — плейсхолдеры в `# ...` не ломают запуск). После Pydantic-валидации — `validate_cross_config()`. **Библиотечный** `load_config` с **0.3.0** при ошибке **выбрасывает исключения** (`FileNotFoundError`, `yaml.YAMLError`, `ValidationError`, `ValueError` и т.д.). CLI (`iskra` / `python -m iskra`) ловит их и печатает в `stderr` (см. [PUBLIC_API.md](PUBLIC_API.md)).
+Реализация: `load_config()` в `iskra/core/config.py`. Сначала `yaml.safe_load`, затем **рекурсивная** подстановка `${VAR_NAME}` **только в строковых значениях** (комментарии в YAML в структуру не попадают — плейсхолдеры в `# ...` не ломают запуск). После Pydantic-валидации — при наличии **`trigger.random_topic_pool_file`** читается YAML и строки из файла **дописываются** к `trigger.random_topic_pool`; затем **`validate_cross_config()`** (в т.ч. импульсы состояния, обратная связь, наличие `valence`/`arousal` при `memory.recall.emotion_enabled`, непустой пул для `new_topic`). **Библиотечный** `load_config` с **0.3.0** при ошибке **выбрасывает исключения** (`FileNotFoundError`, `yaml.YAMLError`, `ValidationError`, `ValueError` и т.д.). CLI (`iskra` / `python -m iskra`) ловит их и печатает в `stderr` (см. [PUBLIC_API.md](PUBLIC_API.md)).
 
 ```python
 import re
@@ -912,7 +991,10 @@ def load_config(path: str = "config.yaml") -> IskraConfig:
     raw = Path(path).read_text(encoding="utf-8")
     data = yaml.safe_load(raw)
     data = deep_substitute_env_in_strings(data)  # ${VAR} только в значениях
-    return IskraConfig.model_validate(data)  # + validate_cross_config(cfg)
+    cfg = IskraConfig.model_validate(data)
+    cfg = merge_random_topic_pool_from_file(cfg, Path(path))
+    validate_cross_config(cfg)
+    return cfg
 ```
 
 ---
@@ -925,6 +1007,11 @@ python -m iskra
 
 # С указанием конфига
 python -m iskra --config path/to/my_config.yaml
+
+# Отчёты по журналу (см. QUICKSTART §3b)
+python -m iskra dashboard --config config.yaml
+python -m iskra summary --config config.yaml
+python -m iskra webhook --config config.yaml --port 8765
 
 # С переменными окружения для API-ключей
 ISKRA_OPENAI_KEY=sk-... python -m iskra --config production.yaml

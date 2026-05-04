@@ -57,7 +57,7 @@ class DefaultTriggerEngine:
         name = chosen.name
 
         try:
-            mem_ctx = chosen.generate_context(self._memory)
+            mem_ctx = chosen.generate_context(self._memory, state=state_before)
         except Exception as e:
             logger.warning("generate_context failed for %s: %s", name, e)
             mem_ctx = []

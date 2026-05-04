@@ -85,3 +85,20 @@ def test_self_reflection_tick_skips_trigger_evaluate(tmp_path: Path, monkeypatch
 
     lines = (tmp_path / "ev.jsonl").read_text(encoding="utf-8").strip().splitlines()
     assert "self_reflection" in lines[-1]
+
+
+def test_run_dry_run_no_memory_writes(tmp_path: Path) -> None:
+    src = Path(__file__).parent / "minimal.yaml"
+    raw = src.read_text(encoding="utf-8")
+    raw = raw.replace("data/test_memory.db", (tmp_path / "mem.db").as_posix())
+    raw = raw.replace("data/test_events.jsonl", (tmp_path / "ev.jsonl").as_posix())
+    raw = raw.replace('data_dir: "data"', f'data_dir: "{tmp_path.as_posix()}"')
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(raw, encoding="utf-8")
+
+    cfg = load_config(cfg_path)
+    ml = MainLoop(cfg)
+    assert ml.memory_store.count() == 0
+    asyncio.run(ml.run(dry_run=True))
+    assert ml.memory_store.count() == 0
+    assert ml._thought_count == 0

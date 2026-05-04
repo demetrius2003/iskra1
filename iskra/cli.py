@@ -34,9 +34,9 @@ from iskra.core.preflight import PreflightError
 
 def main() -> None:
 
-    parent = argparse.ArgumentParser(add_help=False)
+    parent_cfg = argparse.ArgumentParser(add_help=False)
 
-    parent.add_argument(
+    parent_cfg.add_argument(
 
         "--config",
 
@@ -46,13 +46,21 @@ def main() -> None:
 
     )
 
+    parent_run = argparse.ArgumentParser(parents=[parent_cfg], add_help=False)
+
+    parent_run.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Один проход: промпты в лог (INFO); без LLM, записи в память и events.jsonl",
+    )
+
 
 
     parser = argparse.ArgumentParser(
 
         description="Iskra-1 - autonomous thought loop for LLMs",
 
-        parents=[parent],
+        parents=[parent_run],
 
     )
 
@@ -60,11 +68,11 @@ def main() -> None:
 
 
 
-    sub.add_parser("run", parents=[parent], help="Запуск основного цикла (по умолчанию)")
+    sub.add_parser("run", parents=[parent_run], help="Запуск основного цикла (по умолчанию)")
 
     mig_p = sub.add_parser(
         "migrate",
-        parents=[parent],
+        parents=[parent_cfg],
         help="Миграция SQLite -> Lance; см. docs/CONFIG_SCHEMA.md",
     )
     mig_p.add_argument(
@@ -80,6 +88,61 @@ def main() -> None:
         help="Размерность для --dummy-embeddings (по умолчанию 384, как all-MiniLM-L6-v2)",
     )
 
+    dash_p = sub.add_parser(
+        "dashboard",
+        parents=[parent_cfg],
+        help="Статический HTML из events.jsonl (Chart.js); см. QUICKSTART",
+    )
+    dash_p.add_argument(
+        "--hours",
+        type=float,
+        default=24.0,
+        metavar="H",
+        help="Окно времени назад от текущего момента UTC (по умолчанию 24)",
+    )
+    dash_p.add_argument(
+        "-o",
+        "--output",
+        default=None,
+        metavar="PATH",
+        help="Куда сохранить HTML (по умолчанию <data_dir>/dashboard.html)",
+    )
+    dash_p.add_argument(
+        "--events",
+        default=None,
+        metavar="PATH",
+        help="Путь к JSONL (по умолчанию logging.event_log.path из конфига)",
+    )
+
+    sum_p = sub.add_parser(
+        "summary",
+        parents=[parent_cfg],
+        help="Текстовое резюме событий -> daily_summary.txt",
+    )
+    sum_p.add_argument("--hours", type=float, default=24.0, metavar="H")
+    sum_p.add_argument(
+        "-o",
+        "--output",
+        default=None,
+        metavar="PATH",
+        help="Файл вывода (по умолчанию <data_dir>/daily_summary.txt)",
+    )
+    sum_p.add_argument("--events", default=None, metavar="PATH")
+
+    hook_p = sub.add_parser(
+        "webhook",
+        parents=[parent_cfg],
+        help="HTTP POST -> запись текста во внешний файл ввода (localhost; см. QUICKSTART)",
+    )
+    hook_p.add_argument("--host", default="127.0.0.1", metavar="ADDR")
+    hook_p.add_argument("--port", type=int, default=8765, metavar="N")
+    hook_p.add_argument(
+        "--target",
+        default=None,
+        metavar="PATH",
+        help="UTF-8 файл (по умолчанию general.external_input_file из конфига)",
+    )
+
 
 
     args = parser.parse_args()
@@ -93,6 +156,24 @@ def main() -> None:
     if args.command == "migrate":
 
         _run_migrate_cli(args)
+
+        return
+
+    if args.command == "dashboard":
+
+        _run_dashboard_cli(args)
+
+        return
+
+    if args.command == "summary":
+
+        _run_summary_cli(args)
+
+        return
+
+    if args.command == "webhook":
+
+        _run_webhook_cli(args)
 
         return
 
@@ -130,7 +211,13 @@ def main() -> None:
 
     level = getattr(logging, config.logging.level.upper(), logging.INFO)
 
-    logging.basicConfig(level=level, format=config.logging.format)
+    from iskra.logging_support import configure_root_logging
+
+    configure_root_logging(
+        level,
+        config.logging.format,
+        color_primp=config.logging.highlight_primp_logs,
+    )
 
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -138,9 +225,11 @@ def main() -> None:
 
     loop = MainLoop(config)
 
+    dry_run = bool(getattr(args, "dry_run", False))
+
     try:
 
-        asyncio.run(loop.run())
+        asyncio.run(loop.run(dry_run=dry_run))
 
     except PreflightError as e:
 
@@ -165,6 +254,121 @@ def main() -> None:
         sys.exit(1)
 
 
+
+
+
+def _run_dashboard_cli(args: argparse.Namespace) -> None:
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    try:
+
+        from pathlib import Path
+
+        from iskra.experience import write_dashboard
+
+        cfg = load_config(args.config)
+
+        events = Path(args.events or cfg.logging.event_log.path)
+
+        out_raw = args.output
+
+        out = Path(out_raw) if out_raw else Path(cfg.general.data_dir) / "dashboard.html"
+
+        n = write_dashboard(events_path=events, output_path=out, hours=float(args.hours))
+
+        print(f"dashboard: событий в окне: {n} -> {out.resolve()}", file=sys.stderr)
+
+    except FileNotFoundError as e:
+
+        print(e, file=sys.stderr)
+
+        sys.exit(1)
+
+    except (ValidationError, ValueError) as e:
+
+        print(f"Configuration error: {e}", file=sys.stderr)
+
+        sys.exit(1)
+
+
+
+def _run_summary_cli(args: argparse.Namespace) -> None:
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    try:
+
+        from pathlib import Path
+
+        from iskra.experience import write_daily_summary
+
+        cfg = load_config(args.config)
+
+        events = Path(args.events or cfg.logging.event_log.path)
+
+        out_raw = args.output
+
+        out = Path(out_raw) if out_raw else Path(cfg.general.data_dir) / "daily_summary.txt"
+
+        n = write_daily_summary(events_path=events, output_path=out, hours=float(args.hours))
+
+        print(f"summary: событий в окне: {n} -> {out.resolve()}", file=sys.stderr)
+
+    except FileNotFoundError as e:
+
+        print(e, file=sys.stderr)
+
+        sys.exit(1)
+
+    except (ValidationError, ValueError) as e:
+
+        print(f"Configuration error: {e}", file=sys.stderr)
+
+        sys.exit(1)
+
+
+
+def _run_webhook_cli(args: argparse.Namespace) -> None:
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    try:
+
+        from pathlib import Path
+
+        from iskra.experience import run_webhook_server
+
+        cfg = load_config(args.config)
+
+        target = args.target or cfg.general.external_input_file
+
+        if not target:
+
+            print(
+                "webhook: задайте --target или general.external_input_file в конфиге",
+                file=sys.stderr,
+            )
+
+            sys.exit(1)
+
+        run_webhook_server(
+            target_file=Path(target),
+            host=str(args.host),
+            port=int(args.port),
+        )
+
+    except FileNotFoundError as e:
+
+        print(e, file=sys.stderr)
+
+        sys.exit(1)
+
+    except (ValidationError, ValueError) as e:
+
+        print(f"Configuration error: {e}", file=sys.stderr)
+
+        sys.exit(1)
 
 
 
