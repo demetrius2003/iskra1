@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -202,6 +202,84 @@ class ToolsConfig(BaseModel):
     web_search: WebSearchToolConfig = Field(default_factory=WebSearchToolConfig)
 
 
+class WorldTimeSensorConfig(BaseModel):
+    """Локальное время: импульсы только при смене слота (см. ``time_sensor.compute_slot``)."""
+
+    enabled: bool = False
+    check_interval_seconds: int = Field(default=300, ge=10, le=86_400)
+
+
+class WorldWeatherConfig(BaseModel):
+    provider: Literal["openweather", "open_meteo"] = "openweather"
+    enabled: bool = False
+    api_key: str | None = None
+    city: str = "Moscow"
+    lat: float | None = None
+    lon: float | None = None
+    update_interval_seconds: int = Field(default=3600, ge=60, le=86_400)
+
+    @field_validator("api_key", mode="before")
+    @classmethod
+    def normalize_api_key(cls, v: object) -> str | None:
+        if v is None:
+            return None
+        s = str(v).strip().strip('"').strip("'")
+        for ch in ("\ufeff", "\u200b", "\u200c", "\u200d", "\xa0"):
+            s = s.replace(ch, "")
+        return s if s else None
+
+
+class WorldRSSFeedConfig(BaseModel):
+    name: str
+    url: str
+    category: str | None = None
+
+
+class WorldRSSConfig(BaseModel):
+    enabled: bool = False
+    update_interval_seconds: int = Field(default=3600, ge=60, le=86_400)
+    default_category: str = "news"
+    max_items_per_feed: int = Field(default=5, ge=1, le=50)
+    save_importance: float = Field(default=0.5, ge=0.0, le=1.0)
+    feeds: list[WorldRSSFeedConfig] = Field(default_factory=list)
+
+
+class WorldConfig(BaseModel):
+    """Датчики «мира»: время, погода (OpenWeatherMap), RSS → память и строка для промпта."""
+
+    context_max_chars: int = Field(default=1200, ge=200, le=50_000)
+    time_sensor: WorldTimeSensorConfig = Field(default_factory=WorldTimeSensorConfig)
+    weather: WorldWeatherConfig = Field(default_factory=WorldWeatherConfig)
+    rss: WorldRSSConfig = Field(default_factory=WorldRSSConfig)
+
+
+class SandboxPythonConfig(BaseModel):
+    enabled: bool = True
+    interpreter: str = "python"
+    timeout_seconds: int = Field(default=30, ge=1, le=3600)
+    max_output_bytes: int = Field(default=10_000, ge=256, le=2_000_000)
+
+
+class SandboxFilesConfig(BaseModel):
+    enabled: bool = True
+    max_file_size_bytes: int = Field(default=102_400, ge=1024, le=20_000_000)
+    allowed_extensions: list[str] = Field(
+        default_factory=lambda: [".txt", ".md", ".py", ".json"]
+    )
+    list_recursive: bool = False
+
+
+class SandboxConfig(BaseModel):
+    """Песочница файлов и Python под ``sandbox.path`` (см. docs/TZ_ISKRA_0.7.0.md)."""
+
+    enabled: bool = False
+    path: str = "data/sandbox"
+    memory_category: str = "sandbox_result"
+    max_tag_ops_per_tick: int = Field(default=8, ge=1, le=100)
+    python: SandboxPythonConfig = Field(default_factory=SandboxPythonConfig)
+    files: SandboxFilesConfig = Field(default_factory=SandboxFilesConfig)
+
+
 class LLMRetryConfig(BaseModel):
     max_attempts: int = Field(ge=1, default=3)
     backoff_base_seconds: float = Field(ge=0.1, default=1.0)
@@ -294,6 +372,8 @@ class IskraConfig(BaseModel):
     intent: IntentConfig
     llm: LLMConfig = Field(default_factory=LLMConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    world: WorldConfig = Field(default_factory=WorldConfig)
+    sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     general: GeneralConfig = Field(default_factory=GeneralConfig)
@@ -426,6 +506,18 @@ def validate_cross_config(cfg: IskraConfig) -> None:
             raise ValueError(
                 "general.self_reflection_every_n_ticks requires intent.user_prompts.self_reflection"
             )
+    w = cfg.world.weather
+    if w.enabled:
+        if w.provider == "openweather":
+            if not (w.api_key and str(w.api_key).strip()):
+                raise ValueError(
+                    "world.weather.provider=openweather requires non-empty world.weather.api_key"
+                )
+        if (w.lat is None) ^ (w.lon is None):
+            raise ValueError("world.weather: set both lat and lon, or neither (use city)")
+    r = cfg.world.rss
+    if r.enabled and not r.feeds:
+        raise ValueError("world.rss.enabled requires at least one world.rss.feeds entry")
 
 
 def load_config(path: str | Path) -> IskraConfig:

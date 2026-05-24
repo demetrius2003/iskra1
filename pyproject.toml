@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "iskra"
-version = "0.6.0"
+version = "0.7.0"
 description = "Autonomous thought loop for LLMs — state, triggers, memory, adapters"
 readme = "README.md"
 requires-python = ">=3.12"

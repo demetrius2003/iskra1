@@ -46,7 +46,7 @@ class MemoryDeleteTag:
 MemoryTagOp = MemoryRequestTag | MemoryUpdateTag | MemorySaveTag | MemoryDeleteTag
 
 
-def _split_fields(segment: str) -> list[tuple[str, str]]:
+def split_tag_fields(segment: str) -> list[tuple[str, str]]:
     """Разбор ``key: value`` с учётом кавычек в значениях."""
     segment = segment.strip()
     if not segment:
@@ -123,7 +123,7 @@ def parse_line(line: str) -> MemoryTagOp | None:
     if not m:
         return None
     kind = m.group(1).upper()
-    fields = {k: v for k, v in _split_fields(m.group(2))}
+    fields = {k: v for k, v in split_tag_fields(m.group(2))}
     if kind == "MEMORY_REQUEST":
         q = fields.get("query")
         if q is None:
@@ -180,6 +180,9 @@ def parse_memory_tags(text: str) -> list[MemoryTagOp]:
 
 
 def strip_tag_lines(text: str) -> str:
+    from iskra.core.sandbox_tags import strip_sandbox_markup
+
+    text = strip_sandbox_markup(text)
     lines_out: list[str] = []
     for line in text.splitlines():
         s = line.strip()
@@ -199,7 +202,7 @@ def parse_web_search_queries(text: str) -> list[str]:
         rest = (m.group(1) or "").strip()
         if not rest:
             continue
-        fields = _split_fields(rest)
+        fields = split_tag_fields(rest)
         fld = {k.strip().lower(): v for k, v in fields}
         q = fld.get("query") or fld.get("запрос") or fld.get("исследование")
         if q:

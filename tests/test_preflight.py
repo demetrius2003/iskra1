@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
+from collections import namedtuple
 from pathlib import Path
 
 import pytest
@@ -155,4 +157,20 @@ def test_preflight_ollama_unreachable(tmp_path: Path, monkeypatch: pytest.Monkey
     ml = MainLoop(cfg)
     monkeypatch.setattr(ml.llm_adapter, "is_available", lambda: False)
     with pytest.raises(PreflightError, match="Ollama"):
+        asyncio.run(preflight(ml))
+
+
+def test_preflight_aborts_when_disk_almost_full(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    Usage = namedtuple("Usage", ["total", "used", "free"])
+
+    def fake_disk_usage(_path: Path) -> Usage:
+        # Меньше порога PREFLIGHT_MIN_FREE_DISK_BYTES в preflight
+        return Usage(total=10**11, used=10**11 - 1024**2, free=1024**2)
+
+    monkeypatch.setattr(shutil, "disk_usage", fake_disk_usage)
+    cfg = load_config(_minimal_cfg_path(tmp_path))
+    ml = MainLoop(cfg)
+    with pytest.raises(PreflightError, match="диск"):
         asyncio.run(preflight(ml))

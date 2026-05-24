@@ -7,15 +7,33 @@ import logging
 import os
 import shutil
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 if TYPE_CHECKING:
     from iskra.core.main_loop import MainLoop
 
-from iskra.core.config import validate_cross_config
+import httpx
+
+from iskra.core.config import (
+    SandboxConfig,
+    validate_cross_config,
+    WorldRSSConfig,
+    WorldWeatherConfig,
+)
 
 logger = logging.getLogger("iskra.preflight")
+
+# Минимум свободного места на томе ``data_dir`` (иначе старт блокируем — журнал/память/Lance).
+PREFLIGHT_MIN_FREE_DISK_BYTES = 50 * 1024 * 1024
+
+# Исходящий HTTP: несколько независимых URI (TLS и plain).
+_CONNECTIVITY_URLS: tuple[str, ...] = (
+    "https://www.cloudflare.com/cdn-cgi/trace",
+    "http://connectivitycheck.gstatic.com/generate_204",
+)
 
 
 class PreflightError(Exception):
@@ -44,6 +62,191 @@ def _file_writable_if_exists(path: Path, ctx: str) -> None:
 def _file_readable_if_exists(path: Path, ctx: str) -> None:
     if path.is_file() and not os.access(path, os.R_OK):
         raise PreflightError(f"{ctx}: нет чтения {path}")
+
+
+def _append_clock_line(cfg: object, out: list[str]) -> None:
+    now = datetime.now().astimezone()
+    tz_label = now.tzname() or "local"
+    out.append(f"часы: {now.isoformat(timespec='seconds')} ({tz_label})")
+    if getattr(cfg.world.time_sensor, "enabled", False):
+        if now.year < 2020:
+            raise PreflightError(
+                "часы: дата ОС до 2020 года — при включённом world.time_sensor синхронизируйте время"
+            )
+
+
+async def _ensure_http_connectivity(client: httpx.AsyncClient, out: list[str]) -> None:
+    last_err: Exception | None = None
+    for url in _CONNECTIVITY_URLS:
+        try:
+            resp = await client.get(url, follow_redirects=True)
+            if resp.status_code < 500:
+                host = urlparse(url).hostname or url[:56]
+                out.append(f"сеть: исходящий HTTP OK ({host}, статус {resp.status_code})")
+                return
+        except Exception as e:
+            last_err = e
+            continue
+    raise PreflightError(
+        "сеть: не удалось установить исходящий HTTP ни по одному из контрольных URI "
+        f"(интернет, прокси, firewall). Последняя ошибка: {last_err}"
+    )
+
+
+async def _preflight_openweather(
+    client: httpx.AsyncClient,
+    weather: WorldWeatherConfig,
+    out: list[str],
+) -> None:
+    params: dict[str, str] = {
+        "appid": (weather.api_key or "").strip(),
+        "units": "metric",
+    }
+    if weather.lat is not None and weather.lon is not None:
+        params["lat"] = str(weather.lat)
+        params["lon"] = str(weather.lon)
+    else:
+        params["q"] = weather.city.strip()
+    try:
+        resp = await client.get(
+            "https://api.openweathermap.org/data/2.5/weather",
+            params=params,
+            timeout=18.0,
+        )
+    except Exception as e:
+        raise PreflightError(f"weather OpenWeatherMap: нет ответа от API ({e})") from e
+    if resp.status_code == 401:
+        detail = ""
+        try:
+            payload = resp.json()
+            msg = payload.get("message")
+            if msg:
+                detail = f' Ответ API: "{msg}"'
+        except Exception:
+            detail = f" Ответ (начало): {resp.text[:240]!r}"
+        raise PreflightError(
+            "weather OpenWeatherMap: HTTP 401 — ключ не принят OpenWeatherMap."
+            f"{detail}"
+            " Частые причины: (1) ключ создан недавно — активация до ~2 часов после регистрации "
+            "и подтверждения email (см. https://openweathermap.org/faq#error401 ); "
+            "(2) в конфиг попали пробелы/не те символы — возьмите ключ только из раздела «API keys» "
+            "личного кабинета; (3) проверка в браузере: "
+            "https://api.openweathermap.org/data/2.5/weather?q=London&appid=ВАШ_КЛЮЧ — должно быть 200 JSON."
+        )
+    if resp.status_code != 200:
+        raise PreflightError(
+            f"weather OpenWeatherMap: HTTP {resp.status_code} — {resp.text[:280]!r}"
+        )
+    out.append("weather: OpenWeatherMap Current Weather API ответил HTTP 200")
+
+
+async def _preflight_open_meteo(
+    client: httpx.AsyncClient,
+    weather: WorldWeatherConfig,
+    out: list[str],
+) -> None:
+    from iskra.sensors import weather_sensor as ws_mod
+
+    res = await ws_mod.fetch_open_meteo_summary(
+        city=weather.city,
+        lat=weather.lat,
+        lon=weather.lon,
+        client=client,
+        timeout=18.0,
+    )
+    if res is None:
+        raise PreflightError(
+            "weather Open-Meteo: нет данных (геокодирование города или forecast). "
+            "Проверьте world.weather.city / lat+lon, интернет и доступность open-meteo.com."
+        )
+    _deltas, summary = res
+    preview = summary if len(summary) <= 200 else summary[:197] + "..."
+    out.append(f"weather: Open-Meteo OK — проба: {preview}")
+
+
+async def _preflight_rss_feeds(
+    client: httpx.AsyncClient,
+    rss_cfg: WorldRSSConfig,
+    out: list[str],
+) -> None:
+    failures: list[str] = []
+    if not rss_cfg.feeds:
+        raise PreflightError("world.rss.enabled, но feeds пуст")
+    for feed in rss_cfg.feeds:
+        label = f"{feed.name} ({feed.url})"
+        try:
+            resp = await client.get(feed.url, follow_redirects=True, timeout=18.0)
+            if resp.status_code >= 400:
+                failures.append(f"{label}: HTTP {resp.status_code}")
+                continue
+            snippet = (resp.text[:2000] if resp.text else "").lstrip().lower()
+            ct = (resp.headers.get("content-type") or "").lower()
+            looks_feed = (
+                "xml" in ct
+                or snippet.startswith("<?xml")
+                or "<rss" in snippet
+                or "<feed" in snippet
+                or "<rdf:rdf" in snippet
+            )
+            if not looks_feed:
+                failures.append(f"{label}: ответ не похож на RSS/Atom (Content-Type={ct!r})")
+        except Exception as e:
+            failures.append(f"{label}: {e}")
+    if failures:
+        joined = "; ".join(failures[:12])
+        extra = f"; … всего ошибок {len(failures)}" if len(failures) > 12 else ""
+        raise PreflightError(f"RSS: проблемы с лентами — {joined}{extra}")
+    out.append(f"RSS: все {len(rss_cfg.feeds)} лент(ы) доступны и выглядят как XML")
+
+
+def _sandbox_smoke_readwrite(root: Path, out: list[str]) -> None:
+    probe = root / ".iskra_preflight_probe_delete_me"
+    try:
+        probe.write_text("ok\n", encoding="utf-8")
+        txt = probe.read_text(encoding="utf-8")
+        if txt.strip() != "ok":
+            raise PreflightError(f"sandbox: пробная запись в {probe} прочиталась некорректно")
+        probe.unlink(missing_ok=False)
+    except OSError as e:
+        raise PreflightError(
+            f"sandbox: нет полноценного чтения/записи в каталоге {root}: {e}"
+        ) from e
+    out.append(f"sandbox files: пробный файл записан и удалён в {root}")
+
+
+async def _preflight_sandbox_interpreter(sb: SandboxConfig, out: list[str]) -> None:
+    if not sb.python.enabled:
+        out.append("sandbox python: выключен (sandbox.python.enabled=false)")
+        return
+    exe = sb.python.interpreter
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            exe,
+            "-c",
+            "import sys; sys.stdout.write(sys.version.split()[0]); sys.stdout.flush()",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except FileNotFoundError as e:
+        raise PreflightError(
+            f"sandbox python: интерпретатор {exe!r} не найден (PATH или полный путь в sandbox.python.interpreter)"
+        ) from e
+    except OSError as e:
+        raise PreflightError(f"sandbox python: не удалось запустить {exe!r}: {e}") from e
+
+    try:
+        stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=20.0)
+    except TimeoutError as e:
+        proc.kill()
+        raise PreflightError(f"sandbox python: таймаут при запуске {exe!r}") from e
+
+    if proc.returncode != 0:
+        err = stderr_b.decode("utf-8", errors="replace").strip()
+        raise PreflightError(
+            f"sandbox python: {exe!r} вернул код {proc.returncode}: {err}"
+        )
+    ver = stdout_b.decode("utf-8", errors="replace").strip()
+    out.append(f"sandbox python: интерпретатор OK ({exe!r} → Python {ver})")
 
 
 async def preflight(main: MainLoop) -> None:
@@ -189,6 +392,70 @@ async def preflight(main: MainLoop) -> None:
     else:
         out.append("web_search: выключен (tools.web_search.enabled=false)")
 
+    wc = cfg.world
+    _append_clock_line(cfg, out)
+
+    needs_http_probe = ws.enabled or wc.weather.enabled or wc.rss.enabled
+    if needs_http_probe:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(20.0, connect=12.0)
+        ) as http_client:
+            await _ensure_http_connectivity(http_client, out)
+            if wc.weather.enabled:
+                if wc.weather.provider == "open_meteo":
+                    await _preflight_open_meteo(http_client, wc.weather, out)
+                else:
+                    await _preflight_openweather(http_client, wc.weather, out)
+            if wc.rss.enabled:
+                await _preflight_rss_feeds(http_client, wc.rss, out)
+
+    active_world = wc.time_sensor.enabled or wc.weather.enabled or wc.rss.enabled
+    if active_world:
+        bits: list[str] = []
+        if wc.time_sensor.enabled:
+            bits.append(
+                f"time_sensor: включён (interval={wc.time_sensor.check_interval_seconds}s, локальные слоты)"
+            )
+        else:
+            bits.append("time_sensor: выключен")
+        if wc.weather.enabled:
+            loc = ""
+            if wc.weather.lat is not None and wc.weather.lon is not None:
+                loc = f", lat={wc.weather.lat}, lon={wc.weather.lon}"
+            api_lbl = "Open-Meteo (без ключа)" if wc.weather.provider == "open_meteo" else "OpenWeatherMap"
+            bits.append(f"weather: {api_lbl} ({wc.weather.city}{loc})")
+        else:
+            bits.append("weather: выключен")
+        if wc.rss.enabled:
+            bits.append(
+                f"rss: {len(wc.rss.feeds)} лент(ы), категория по умолчанию «{wc.rss.default_category}» "
+                "(проверка HTTP/XML выше)"
+            )
+        else:
+            bits.append("rss: выключен")
+        out.append("world: " + "; ".join(bits))
+    else:
+        out.append(
+            "world: все сенсоры выключены (world.time_sensor / weather / rss — см. docs/TZ_ISKRA_0.7.0.md)"
+        )
+
+    sb = cfg.sandbox
+    if sb.enabled:
+        root = Path(sb.path)
+        _dir_writable(root, "sandbox.path")
+        if sb.files.enabled:
+            _sandbox_smoke_readwrite(root, out)
+        else:
+            out.append("sandbox files: выключены в конфиге — проба записи файлов пропущена")
+        await _preflight_sandbox_interpreter(sb, out)
+        out.append(
+            f"sandbox: включён path={sb.path!r}, "
+            f"max_tag_ops_per_tick={sb.max_tag_ops_per_tick}, "
+            f"subprocess timeout={sb.python.timeout_seconds}s"
+        )
+    else:
+        out.append("sandbox: выключен")
+
     # --- Внешний ввод (файл) ---
     ex = cfg.general.external_input_file
     if ex:
@@ -250,7 +517,17 @@ async def preflight(main: MainLoop) -> None:
     dd.mkdir(parents=True, exist_ok=True)
     du = shutil.disk_usage(dd)
     free_gib = du.free / (1024**3)
-    out.append(f"диск: свободно ~{free_gib:.2f} GiB (том каталога data_dir={dd})")
+    if du.free < PREFLIGHT_MIN_FREE_DISK_BYTES:
+        raise PreflightError(
+            f"диск: на томе data_dir критически мало места "
+            f"(свободно {du.free} B, нужно ≥ {PREFLIGHT_MIN_FREE_DISK_BYTES} B, "
+            f"это ~{PREFLIGHT_MIN_FREE_DISK_BYTES // (1024 * 1024)} MiB)"
+        )
+    pct_free = 100.0 * du.free / du.total
+    out.append(
+        f"диск: свободно ~{free_gib:.2f} GiB (~{pct_free:.1f}% тома), порог свободного места OK "
+        f"(≥{PREFLIGHT_MIN_FREE_DISK_BYTES // (1024 * 1024)} MiB на томе data_dir={dd})"
+    )
 
     # --- Output: файл ---
     if cfg.output.channel == "file":

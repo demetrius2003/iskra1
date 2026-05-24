@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
+import httpx
 import yaml
 
 from iskra.core.config import IskraConfig
@@ -25,6 +26,7 @@ from iskra.core.memory_tags import (
     parse_web_search_queries,
     strip_tag_lines,
 )
+from iskra.core.sandbox_tags import apply_sandbox_tags, parse_sandbox_tags
 from iskra.core.state_engine import OUStateEngine
 from iskra.core.trigger_engine import DefaultTriggerEngine
 from iskra.event_log import EventLog
@@ -33,6 +35,8 @@ from iskra.llm.protocol import LLMError, LLMNetworkError, LLMRateLimitError, LLM
 from iskra.memory import create_memory_store
 from iskra.models import EventLogEntry, LLMResponse, SparkEvent
 from iskra.output import create_output_channel
+from iskra.sandbox import SandboxManager
+from iskra.sensors.world_poll import WorldRuntimeState, poll_world_sensors
 from iskra.triggers import create_trigger_types
 
 logger = logging.getLogger("iskra.core.main_loop")
@@ -97,6 +101,29 @@ class MainLoop:
         self._emotion_max_chars = ecfg.max_input_chars
         self._web_search_hour_times: list[float] = []
         self._ws_tick_remaining = 0
+
+        self._world_runtime = WorldRuntimeState()
+        if config.world.rss.enabled:
+            self._world_runtime.init_rss_dedupe(config.general.data_dir)
+
+        self._sandbox_manager: SandboxManager | None = None
+        if config.sandbox.enabled:
+            self._sandbox_manager = SandboxManager(config.sandbox)
+            self._sandbox_manager.ensure_root()
+
+    async def _poll_world_context(self, monotonic_now: float) -> str:
+        w = self.config.world
+        if not (w.time_sensor.enabled or w.weather.enabled or w.rss.enabled):
+            return ""
+        async with httpx.AsyncClient() as client:
+            return await poll_world_sensors(
+                cfg=self.config,
+                state_engine=self.state_engine,
+                memory_store=self.memory_store,
+                runtime=self._world_runtime,
+                monotonic_now=monotonic_now,
+                client=client,
+            )
 
     def _write_pid_file(self) -> None:
         pid_path = Path(self.config.general.pid_file)
@@ -410,9 +437,11 @@ class MainLoop:
         now = time.monotonic()
         elapsed = max(0.0, now - self.last_tick_time)
         self.state_engine.tick(elapsed)
+        world_ctx_str = await self._poll_world_context(now)
         state_before = self.state_engine.snapshot()
 
         external_text: str | None = self._read_external_input_text()
+        clean_ext = strip_tag_lines(external_text).strip() if external_text else ""
         if external_text:
             self.state_engine.apply_impulse("user_message")
             logger.info("dry-run | внешний ввод: %d символов", len(external_text))
@@ -429,11 +458,16 @@ class MainLoop:
                 logger.info("dry-run | триггер не выбран (evaluate → None)")
                 return
 
+            md = {
+                **(event.metadata or {}),
+                "world_context": world_ctx_str,
+                "sandbox_tools_available": self._sandbox_manager is not None,
+                "agency_level": self.config.agency.level,
+                "web_search_enabled": self.config.tools.web_search.enabled,
+            }
             if external_text:
-                event = replace(
-                    event,
-                    metadata={**event.metadata, "external_input": external_text},
-                )
+                md["external_input"] = clean_ext
+            event = replace(event, metadata=md)
 
             intent = self.intent_generator.generate(event)
             recalled_ids = [m.id for m in event.memory_context if m.id]
@@ -484,6 +518,8 @@ class MainLoop:
         now = time.monotonic()
         elapsed = max(0.0, now - self.last_tick_time)
         self.state_engine.tick(elapsed)
+
+        world_ctx_str = await self._poll_world_context(now)
 
         if now < self.cooldown_until:
             self.last_tick_time = time.monotonic()
@@ -536,11 +572,16 @@ class MainLoop:
                 self.last_tick_time = time.monotonic()
                 return
 
+            md = {
+                **(event.metadata or {}),
+                "world_context": world_ctx_str,
+                "sandbox_tools_available": self._sandbox_manager is not None,
+                "agency_level": self.config.agency.level,
+                "web_search_enabled": self.config.tools.web_search.enabled,
+            }
             if external_text:
-                event = replace(
-                    event,
-                    metadata={**event.metadata, "external_input": clean_ext},
-                )
+                md["external_input"] = clean_ext
+            event = replace(event, metadata=md)
 
             intent = self.intent_generator.generate(event)
 
@@ -567,6 +608,15 @@ class MainLoop:
                     self.config.agency,
                     default_category=event.trigger_type,
                 )
+            if self._sandbox_manager:
+                sb_ops = parse_sandbox_tags(raw_llm)
+                if sb_ops:
+                    await apply_sandbox_tags(
+                        sb_ops,
+                        manager=self._sandbox_manager,
+                        memory_store=self.memory_store,
+                        max_ops=self.config.sandbox.max_tag_ops_per_tick,
+                    )
             if ws_post:
                 await self._flush_web_searches(ws_post)
 

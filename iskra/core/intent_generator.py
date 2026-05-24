@@ -22,9 +22,29 @@ class Jinja2IntentGenerator:
         if not isinstance(ext, str):
             ext = str(ext)
 
+        world_ctx = (event.metadata or {}).get("world_context") or ""
+        if not isinstance(world_ctx, str):
+            world_ctx = str(world_ctx)
+
+        sandbox_tools_available = bool(
+            (event.metadata or {}).get("sandbox_tools_available")
+        )
+        _meta = event.metadata or {}
+        agency_level = _meta.get("agency_level")
+        if agency_level is not None:
+            agency_level = int(agency_level)
+        web_search_enabled = bool(_meta.get("web_search_enabled", True))
+
         try:
             sys_t = jinja2.Template(self._cfg.system_prompt_template)
-            system_prompt = sys_t.render(state=state, external_input=ext)
+            system_prompt = sys_t.render(
+                state=state,
+                external_input=ext,
+                world_context=world_ctx,
+                sandbox_tools_available=sandbox_tools_available,
+                agency_level=agency_level,
+                web_search_enabled=web_search_enabled,
+            )
         except jinja2.TemplateError as e:
             logger.error("system template error: %s", e)
             raise
@@ -46,6 +66,10 @@ class Jinja2IntentGenerator:
                 memories=[m.content for m in event.memory_context],
                 memory_lines=memory_lines,
                 external_input=ext,
+                world_context=world_ctx,
+                sandbox_tools_available=sandbox_tools_available,
+                agency_level=agency_level,
+                web_search_enabled=web_search_enabled,
             )
         except jinja2.TemplateError as e:
             logger.error("user template error: %s", e)

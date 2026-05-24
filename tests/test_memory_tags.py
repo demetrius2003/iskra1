@@ -80,6 +80,22 @@ def test_agency_l3_delete(tmp_path) -> None:
     assert store.count() == 0
 
 
+def test_strip_tag_lines_removes_sandbox_markup() -> None:
+    raw = (
+        "intro\n"
+        '[WRITE_FILE] filename: "x.txt" content: "y"\n'
+        "[PYTHON_CODE]\nprint(1)\n[/PYTHON_CODE]\n"
+        "visible\n"
+        "[LIST_FILES]\n"
+        "tail"
+    )
+    out = strip_tag_lines(raw).strip()
+    assert "WRITE_FILE" not in out
+    assert "PYTHON_CODE" not in out
+    assert "LIST_FILES" not in out
+    assert "visible" in out
+
+
 def test_strip_tag_lines() -> None:
     raw = "a\n[MEMORY_SAVE] content: \"x\"\nb"
     assert strip_tag_lines(raw).strip() == "a\nb"

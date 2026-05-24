@@ -3,7 +3,7 @@
 # Подробности: docs/VERSIONING.md
 
 # Версия продукта (исходный код и релизы). SemVer: MAJOR.MINOR.PATCH
-PRODUCT_VERSION=0.6.0
+PRODUCT_VERSION=0.7.0
 
 # Версия комплекта документов (ТЗ, FORMAL_SPEC, CONFIG_SCHEMA, выровненные пути).
 # SemVer. Меняется при существенных правках спецификации.

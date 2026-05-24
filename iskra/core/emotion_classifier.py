@@ -6,8 +6,6 @@ import logging
 import math
 import re
 from pathlib import Path
-from typing import Any
-
 import yaml
 
 logger = logging.getLogger("iskra.core.emotion")

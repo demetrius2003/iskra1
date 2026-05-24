@@ -168,15 +168,43 @@ intent:
     {% for var_name, var_value in state.items() %}
     - {{ var_name }}: {{ "%.2f"|format(var_value) }}
     {% endfor %}
+    Калибровка шкалы valence: от -1.0 (тяжело) до +1.0 (радостно), сейчас {{ "%.2f"|format(state.valence) }}.
     {% if external_input %}
     Снаружи в канал вставлен текст (Telegram, файл вручную — что угодно). Учти по смыслу;
     это не обязан быть «человек», но сигнал реальный:
     {{ external_input }}
     {% endif %}
+    {% if world_context %}
+    Краткий снимок мира (сенсоры из конфига world.* — время, погода, новости):
+    {{ world_context }}
+    {% endif %}
 
+    {% if web_search_enabled %}
     При необходимости ты можешь искать во внешнем мире (интернет): добавь отдельной строкой
     тег вида [WEB_SEARCH] query: "..." или [WEB_SEARCH] запрос: "..." (или просто текст запроса после тега).
     Делай это только когда нужна конкретная информация, которой у тебя нет; не чаще одного такого запроса за одну мысль.
+    {% endif %}
+    {% if agency_level is not none %}
+    Память (отдельные строки в конце ответа; исполнение зависит от agency в конфиге — сейчас L{{ agency_level }}):
+    [MEMORY_REQUEST] query: "..."
+    [MEMORY_SAVE] content: "...", importance: 0.5
+    [MEMORY_UPDATE] id: "uuid", importance: 0.7
+    [MEMORY_UPDATE] id: "uuid", links: "другой-uuid"
+    [MEMORY_DELETE] id: "uuid"
+    На низких уровнях часть действий может быть только запросом к памяти или предложением без записи; удаление — обычно только при L3.
+    {% endif %}
+    {% if sandbox_tools_available %}
+    У тебя есть локальная песочница (файлы и Python только внутри каталога sandbox из конфига; допустимые расширения заданы там же).
+    Если хочешь что-то сохранить, прочитать, посмотреть список файлов или выполнить короткий код — добавь в конец ответа отдельными строками теги:
+    [WRITE_FILE] filename: "note.txt", content: "текст одной строки или несколько через \\n в кавычках"
+    [READ_FILE] filename: "note.txt"
+    [LIST_FILES]
+    [RUN_PYTHON] filename: "script.py"
+    [PYTHON_CODE]
+    print("пример")
+    [/PYTHON_CODE]
+    Не злоупотребляй: только когда это правда помогает мысли или эксперименту; один-два осмысленных действия за раз достаточно.
+    {% endif %}
 
   user_prompts:
     new_topic: "Тебе вдруг стало интересно: {{ context }}{% if external_input %}\n\n(Во внимание, пришло снаружи: {{ external_input }}){% endif %}"
@@ -247,7 +275,7 @@ tools:
   web_search:
     enabled: true
     max_results: 5
-    summary_max_tokens: 300
+    summary_max_tokens: 512
     max_per_tick: 1
     max_per_hour: 5
     memory_importance: 0.8
@@ -255,8 +283,55 @@ tools:
     log_snippet_count: true
     log_snippet_previews: true
     log_snippet_preview_limit: 5
-    log_snippet_preview_chars: 280
-    log_summary_preview_chars: 320
+    log_snippet_preview_chars: 320
+    log_summary_preview_chars: 512
+
+# Мир v0.7.0: время слотами, погода (OpenWeatherMap или Open-Meteo без ключа), RSS → память и промпт (world_context).
+# По умолчанию выключено — включайте нужное и задавайте ключи и ленты.
+world:
+  context_max_chars: 1200
+  time_sensor:
+    enabled: true
+    check_interval_seconds: 300
+  weather:
+    enabled: true
+    # openweather — нужен api_key (OpenWeatherMap). open_meteo — без ключа: https://open-meteo.com/
+    provider: open_meteo
+    api_key: null
+    city: "Novokuznetsk"
+    lat: null
+    lon: null
+    update_interval_seconds: 3600
+  rss:
+    enabled: true
+    update_interval_seconds: 3600
+    default_category: news
+    max_items_per_feed: 5
+    save_importance: 0.5
+    feeds:
+      - name: "Лента.ру — новости"
+        url: "https://lenta.ru/rss/news"
+        category: news
+      - name: "Хабр — все посты"
+        url: "https://habr.com/ru/rss/all/all/?fl=ru"
+        category: tech
+
+# Песочница под sandbox.path — теги [WRITE_FILE], [READ_FILE], [LIST_FILES], [RUN_PYTHON], [PYTHON_CODE]…[/PYTHON_CODE].
+sandbox:
+  enabled: true
+  path: "data/sandbox"
+  memory_category: sandbox_result
+  max_tag_ops_per_tick: 8
+  python:
+    enabled: true
+    interpreter: python
+    timeout_seconds: 30
+    max_output_bytes: 10000
+  files:
+    enabled: true
+    max_file_size_bytes: 102400
+    allowed_extensions: [".txt", ".md", ".py", ".json"]
+    list_recursive: false
 
 output:
   channel: "console"

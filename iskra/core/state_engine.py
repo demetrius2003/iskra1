@@ -65,6 +65,16 @@ class OUStateEngine:
         for _rule_name, rule in self._cfg.feedback.items():
             self._apply_rule(rule, trigger_type, llm_response)
 
+    def apply_variable_deltas(self, deltas: dict[str, float]) -> None:
+        """Прибавить дельты к переменным состояния с клампом (сенсоры мира, погода и т.д.)."""
+        for var_name, delta in deltas.items():
+            if var_name not in self._vars:
+                continue
+            vc = self._cfg.variables[var_name]
+            self._vars[var_name] = _clamp(
+                self._vars[var_name] + float(delta), vc.clamp_min, vc.clamp_max
+            )
+
     def blend_emotion_toward_sample(
         self,
         sample_valence: float,
